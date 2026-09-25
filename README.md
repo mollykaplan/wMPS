@@ -45,7 +45,7 @@ and the positional arguments `(elt=ComplexF64, symmetry=Trivial, lattice=Infinit
 | D6      | `LL_D6`       | 562            | `LL_D6_minimal`   | 45             |
 | D8      | `LL_D8`       | 2466           | `LL_D8_minimal`   | 84             |
 
-(bond dimensions at `cutoff = 2`.) The minimal MPOs are the same operator, reproduced to floating point round-off, and are much faster both to build and to optimize with (VUMPS is about 9× faster for D6). `LL_D6` and `LL_D8` build the MPO term by term and are kept as an independent reference and to reproduce the original computations; `LL_D8` in particular takes a long time to build. `LL_wavelet_minimal(K, Γ4, ...)` builds the same Hamiltonian for any wavelet order, given its coefficients.
+The minimal MPOs are the same operator, reproduced to floating point round-off, and are much faster both to build and to optimize with (VUMPS is about 9× faster for D6). `LL_D6` and `LL_D8` build the MPO term by term and are kept as an independent reference and to reproduce the original computations; `LL_D8` in particular takes a long time to build. `LL_wavelet_minimal(K, Γ4, ...)` builds the same Hamiltonian for any wavelet order, given its coefficients.
 
 ## Usage
 
