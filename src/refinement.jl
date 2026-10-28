@@ -208,14 +208,15 @@ D_refine = bond dimension of the truncated MPS output
 Einc = if true, will stop the refinement loop if the single-site state has higher energy than the previous, lower-resolution state
 verbosity = prints progress if ≥ 1
 model = Hamiltonian at each resolution, called as model(; μ, c, r, cutoff). Defaults to LL_D6_minimal, the same operator as LL_D6
-        but much faster to build and use. The refinement circuit uses D6 wavelets, so this should be a D6 model
+        but much faster to build and use. The refinement circuit uses D6 wavelets, so this should be a D6 model.
+        The printed starting energy is evaluated with exact_model(model)
 
 Output: final single-site state
 """
 function refinement_alg(ψ, r_start, n_scale, μ, c, dmax, d, D_refine ; Einc=false, model=LL_D6_minimal, verbosity=1)
     d == dmax + 1 || throw(ArgumentError("the refinement loop needs d == dmax + 1 (got d = $d, dmax = $dmax), since each step's output is the next step's input"))
 
-    E_end = real(expectation_value(ψ, model(; μ=μ, c=c, r=r_start, cutoff=dmax)))
+    E_end = real(expectation_value(ψ, exact_model(model)(; μ=μ, c=c, r=r_start, cutoff=dmax)))
     verbosity >= 1 && println("Starting energy: $E_end")
     for i=1:n_scale   
         Hri=model(; μ=μ, c=c, r=r_start+i, cutoff=dmax)
@@ -257,17 +258,18 @@ lbfgs_memory = number of previous steps kept by L-BFGS
 verbosity = verbosity of L-BFGS; progress is printed if ≥ 1
 metric_regulator = regularization of the L-BFGS preconditioner, see precondition()
 model = Hamiltonian at each resolution, called as model(; μ, c, r, cutoff). Defaults to LL_D6_minimal, the same operator as LL_D6
-        but much faster to build and use. The refinement circuit uses D6 wavelets, so this should be a D6 model
+        but much faster to build and use. The refinement circuit uses D6 wavelets, so this should be a D6 model.
+        The optimization uses model, but the printed starting and groundstate energies are evaluated with exact_model(model)
 
 Output: tuple (state_array, history)
 state_array = array of size (n_scale, D_refine, dmax+1, D_refine) holding the AL tensor of the state at each resolution.
     Tensors with bond dimension below D_refine are zero-padded, and resolutions not reached (early exit) are all zeros.
 history = combined L-BFGS history of all resolutions, with columns (time, energy density, gradient norm); the time
-    includes the refinement and single-site steps
+    includes the refinement and single-site steps. The energies are those of model, recorded during the optimization
 """
 function refine_optim(ψ, r_start, n_scale, μ, c, dmax, d, D_refine, gg_fg ; verbosity=3, lbfgs_memory=8, model=LL_D6_minimal, metric_regulator=1e-8)
     d == dmax + 1 || throw(ArgumentError("the refinement loop needs d == dmax + 1 (got d = $d, dmax = $dmax), since each step's output is the next step's input"))
-    E_end = real(expectation_value(ψ, model(; μ=μ, c=c, r=r_start, cutoff=dmax)))
+    E_end = real(expectation_value(ψ, exact_model(model)(; μ=μ, c=c, r=r_start, cutoff=dmax)))
     state_array = zeros(ComplexF64, n_scale, D_refine, dmax + 1, D_refine)
     verbosity >= 1 && println("Starting energy: $E_end")
     delta_old=zeros(Float64, 0, 3) #(time, energy density, gradient norm), empty until the first step completes
@@ -299,7 +301,7 @@ function refine_optim(ψ, r_start, n_scale, μ, c, dmax, d, D_refine, gg_fg ; ve
         delta[:,1] .+= refine_elapsed+single_elapsed
         delta_old = isempty(delta_old) ? delta : add_histories_kf(delta_old, delta)
 
-        E_end = real(expectation_value(ψ, Hri)) #groundstate energy
+        E_end = real(expectation_value(ψ, exact_model(model)(; μ=μ, c=c, r=r_start+i, cutoff=dmax))) #groundstate energy, with the exact MPO
         verbosity >= 1 && println("Groundstate energy: $E_end")
   
     end

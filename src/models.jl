@@ -154,13 +154,20 @@ function LL_D6(elt::Type{<:Number}=ComplexF64,
                         symmetry::Type{<:Sector}=Trivial,
                         lattice::AbstractLattice=InfiniteChain(1);
                         μ=2.0, c=1.0, r=0.0, cutoff=2)
+    return LL_D6_hamiltonian(nothing, elt, symmetry, lattice; μ, c, r, cutoff)
+end
+
+#LL_D6, with the local operators `extra` (a SumOfLocalOperators, or nothing) added to the sum of
+#terms before it is turned into an MPO
+function LL_D6_hamiltonian(extra, elt::Type{<:Number}, symmetry::Type{<:Sector}, lattice::AbstractLattice;
+                           μ, c, r, cutoff)
     #all terms in the Hamiltonian
     chem_pot = rmul!(a_number(elt, symmetry; cutoff=cutoff), -(2^r)*μ)
     kinetic =  rmul!(a_plusmin(elt, symmetry; cutoff=cutoff)+ a_minplus(elt, symmetry; cutoff=cutoff), 2^(3*r))
     kinetic_ss = rmul!(a_number(elt, symmetry; cutoff=cutoff), 2^(3*r))
     interaction = rmul!(a_ppmm(elt, symmetry; cutoff=cutoff) +
                     a_mmpp(elt, symmetry; cutoff=cutoff), 2^(2*r)*c) #a⁺ ⊗ a⁺ ⊗ a⁻ ⊗ a⁻ + a⁻ ⊗ a⁻ ⊗ a⁺ ⊗ a⁺
-    interaction_ss_2 = rmul!(a_ppmm_2mm(elt, symmetry; cutoff=cutoff) + 
+    interaction_ss_2 = rmul!(a_ppmm_2mm(elt, symmetry; cutoff=cutoff) +
                         a_ppmm_2pp(elt, symmetry; cutoff=cutoff), 2^(2*r)*c) #a⁺a⁺ ⊗ a⁻ ⊗ a⁻ + a⁻a⁻ ⊗ a⁺ ⊗ a⁺
     interaction_ss_2pm = rmul!(a_ppmm_2pm(elt, symmetry; cutoff=cutoff) +
                             a_ppmm_2mp(elt, symmetry; cutoff=cutoff), 2^(2*r)*c) #a⁺ ⊗ a⁺a⁻ ⊗ a⁻ + a⁻ ⊗ a⁺a⁻ ⊗ a⁺
@@ -169,10 +176,10 @@ function LL_D6(elt::Type{<:Number}=ComplexF64,
     interaction_ss_3pm = rmul!(a_ppmm_3pm(elt, symmetry; cutoff=cutoff), 2^(2*r)*c) #a⁺a⁻ ⊗ a⁺a⁻
     interaction_ss_3ppmm = rmul!(a_ppmm_3ppmm(elt, symmetry; cutoff=cutoff) +
                             a_ppmm_3mmpp(elt, symmetry; cutoff=cutoff), 2^(2*r)*c) #a⁺a⁺ ⊗ a⁻a⁻ + a⁻a⁻ ⊗ a⁺a⁺
-    interaction_ss_4 = rmul!(a_ppmm_4(elt, symmetry; cutoff=cutoff), 2^(2*r)*c) 
+    interaction_ss_4 = rmul!(a_ppmm_4(elt, symmetry; cutoff=cutoff), 2^(2*r)*c)
 
     #building the Hamiltonian
-    return @mpoham begin 
+    return @mpoham begin
         #kinetic terms
         mpo_sum= sum(vertices(lattice)) do i
             return K6[1]*kinetic_ss{i} #kinetic term, a⁺a⁻ on same site
@@ -206,7 +213,7 @@ function LL_D6(elt::Type{<:Number}=ComplexF64,
                     for o=1:4
                         if o!=n && o!=m
                             term1 = sum(fourpt_neighbours(m,n,o, lattice)) do (i,(j,k,l))  #four-site terms
-                                return 2*Γ4_D6[m+5,n+5,o+5]*interaction{i,j,k,l} 
+                                return 2*Γ4_D6[m+5,n+5,o+5]*interaction{i,j,k,l}
                             end
                             mpo_sum+=term1
                         end
@@ -214,11 +221,12 @@ function LL_D6(elt::Type{<:Number}=ComplexF64,
                 end
             end
         end
-        
-        #adding the chemical potential term, and outputting
-        mpo_sum + sum(vertices(lattice)) do i
+
+        #adding the chemical potential term and the extra terms, and outputting
+        mpo_sum += sum(vertices(lattice)) do i
             return chem_pot{i}
         end
+        isnothing(extra) ? mpo_sum : mpo_sum + extra
     end
 end
 
@@ -736,13 +744,44 @@ function exact_mpo_hamiltonian(coeffs::Dict{Vector{Int}, T}, ops::Vector{<:Matri
                                R::Integer, lattice::AbstractLattice;
                                elt::Type{<:Number} = ComplexF64, rtol::Real = 1.0e-13,
                                verbose::Bool = false) where {T <: Real}
+    W = exact_mpo_matrix(coeffs, ops, R; elt = elt, rtol = rtol, verbose = verbose)
+
+    if lattice isa InfiniteChain
+        length(lattice) == 1 ||
+            throw(ArgumentError("only a one-site unit cell is supported, got $lattice"))
+        return InfiniteMPOHamiltonian([W])
+    elseif lattice isa FiniteChain
+        L = length(lattice)
+        L > R || throw(ArgumentError("chain of length $L is shorter than the range $R"))
+        return FiniteMPOHamiltonian([i == 1 ? W[1:1, :] : i == L ? W[:, end:end] : W
+                                     for i in 1:L])
+    else
+        throw(ArgumentError("unsupported lattice $lattice"))
+    end
+end
+
+#an on-site operator, given as a matrix, as an entry of an MPO matrix
+function mpo_entry(mat::AbstractMatrix, elt::Type{<:Number})
+    pspace = ComplexSpace(size(mat, 1))
+    return MPSKit.add_util_leg(TensorMap(convert(Matrix{elt}, mat), pspace ← pspace))
+end
+
+"""
+    exact_mpo_matrix(coeffs, ops, R; elt=ComplexF64, rtol=1e-13, verbose=false)
+
+The Jordan form MPO matrix `W` built by [`exact_mpo_hamiltonian`](@ref), whose entries are
+`missing`, numbers (multiples of the identity) or MPO tensors.  The first and last virtual
+levels are the "not started" and "done" states.
+"""
+function exact_mpo_matrix(coeffs::Dict{Vector{Int}, T}, ops::Vector{<:Matrix}, R::Integer;
+                          elt::Type{<:Number} = ComplexF64, rtol::Real = 1.0e-13,
+                          verbose::Bool = false) where {T <: Real}
     nops = length(ops)
     (; A, B, C, D, grades) = exact_mpo_data(coeffs, nops, R; rtol = rtol, verbose = verbose)
     r = length(grades)
 
     d = size(first(ops), 1)
-    pspace = ComplexSpace(d)
-    TO = typeof(MPSKit.add_util_leg(TensorMap(zeros(elt, d, d), pspace ← pspace)))
+    TO = typeof(mpo_entry(zeros(elt, d, d), elt))
 
     # γ ↦ MPO matrix entry: `missing` when it vanishes, a number when it is a multiple of the
     # identity (MPSKit then stores a BraidingTensor rather than a dense tensor), a tensor else
@@ -755,7 +794,7 @@ function exact_mpo_hamiltonian(coeffs::Dict{Vector{Int}, T}, ops::Vector{<:Matri
         for o in 1:nops
             iszero(γ[o]) || axpy!(γ[o], ops[o], mat)
         end
-        return MPSKit.add_util_leg(TensorMap(mat, pspace ← pspace))
+        return mpo_entry(mat, elt)
     end
 
     W = Matrix{Union{Missing, elt, TO}}(missing, r + 2, r + 2)
@@ -772,18 +811,7 @@ function exact_mpo_hamiltonian(coeffs::Dict{Vector{Int}, T}, ops::Vector{<:Matri
     @assert all(ismissing, W[i, j] for i in 1:(r + 2), j in 1:(r + 2) if j < i) "the MPO must \
         be upper triangular for MPSKit's environments to be correct"
 
-    if lattice isa InfiniteChain
-        length(lattice) == 1 ||
-            throw(ArgumentError("only a one-site unit cell is supported, got $lattice"))
-        return InfiniteMPOHamiltonian([W])
-    elseif lattice isa FiniteChain
-        L = length(lattice)
-        L > R || throw(ArgumentError("chain of length $L is shorter than the range $R"))
-        return FiniteMPOHamiltonian([i == 1 ? W[1:1, :] : i == L ? W[:, end:end] : W
-                                     for i in 1:L])
-    else
-        throw(ArgumentError("unsupported lattice $lattice"))
-    end
+    return W
 end
 
 ################################################################################################
@@ -964,3 +992,231 @@ function LL_wavelet_minimal(K::AbstractVector, Γ4::AbstractArray{<:Real, 3},
     return exact_mpo_hamiltonian(coeffs, ops, R, lattice; elt = elt, rtol = rtol,
                                  verbose = verbose)
 end
+
+################################################################################################
+# Lieb-Liniger model in a harmonic trap, for D6 wavelets, on a finite chain
+#
+# The trap adds ∫ V(x) ψ⁺(x)ψ(x) dx, V(x) = ½ω²(x - x₀)², to the Hamiltonian.  In the basis of
+# scaling functions sₙʳ(x) = 2^{r/2} s(2ʳx - n) this is the quadratic term Σₙₘ Vₙₘ ψₙ⁺ψₘ with
+#
+#       Vₙ,ₙ₊ₖ = ∫ V(x) sₙʳ(x) sₙ₊ₖʳ(x) dx = ½ω² 2⁻²ʳ [(n - y₀)² δₖ₀ + 2(n - y₀) M₁(k) + M₂(k)],
+#
+# with y₀ = 2ʳx₀ and M_q(k) = ∫ x^q s(x) s(x - k) dx, which follow exactly from the refinement
+# equation.  The trap breaks translation invariance, so these models are only defined on a
+# FiniteChain, whose site i holds the mode n = i - 1.
+################################################################################################
+
+"""
+    scaling_moments(h, p)
+
+Moments `M[q+1, k+w+1] = ∫ x^q s(x) s(x-k) dx`, for `q = 0, …, p` and all overlapping shifts
+`k = -w:w` (`w = length(h) - 2`), of the scaling function with filter `h`, i.e.
+`s(x) = √2 Σⱼ hⱼ s(2x - j)`.
+
+They are exact up to round-off: the refinement equation turns each moment into a linear system,
+M_q(k) = 2⁻ᵠ Σᵢⱼ hᵢhⱼ Σ_{q′≤q} binomial(q, q′) i^{q-q′} M_{q′}(2k + j - i), starting from the
+orthonormality M₀(k) = δₖ₀.
+"""
+function scaling_moments(h::AbstractVector, p::Integer)
+    w = length(h) - 2
+    nk = 2w + 1
+    M = zeros(p + 1, nk)
+    M[1, w + 1] = 1
+    for q in 1:p
+        T = zeros(nk, nk)
+        rhs = zeros(nk)
+        for (ik, k) in enumerate(-w:w), (i, hi) in enumerate(h), (j, hj) in enumerate(h)
+            m = 2k + (j - 1) - (i - 1)              # filter indices start at 0
+            abs(m) <= w || continue
+            T[ik, m + w + 1] += hi * hj / 2^q
+            for q′ in 0:(q - 1)
+                rhs[ik] += hi * hj / 2^q * binomial(q, q′) * (i - 1)^(q - q′) * M[q′ + 1, m + w + 1]
+            end
+        end
+        M[q + 1, :] = (I - T) \ rhs
+    end
+    return M
+end
+
+"""
+    trap_matrix(L; ω=1.0, x0=nothing, r=0.0, h=h6)
+
+The matrix `Vₙₘ = ∫ V(x) sₙʳ(x) sₘʳ(x) dx` of the harmonic potential `V(x) = ½ω²(x - x0)²`
+between the `L` scaling functions `n = 0, …, L-1` at resolution `r`.  By default the trap is
+centred on the chain, halfway between the centres of mass of the first and the last mode.
+"""
+function trap_matrix(L::Integer; ω=1.0, x0=nothing, r=0.0, h::AbstractVector=h6)
+    M = scaling_moments(h, 2)
+    w = length(h) - 2
+    y0 = isnothing(x0) ? (L - 1) / 2 + M[2, w + 1] : 2^r * x0
+    V = zeros(L, L)
+    for n in 0:(L - 1), m in max(0, n - w):min(L - 1, n + w)
+        k = m - n
+        V[n + 1, m + 1] = ω^2 / 2 * 2.0^(-2r) *((n - y0)^2 * M[1, k + w + 1] + 2 * (n - y0) * M[2, k + w + 1] + M[3, k + w + 1])
+    end
+    return V
+end
+
+check_trap_lattice(lattice) = lattice isa FiniteChain ||
+    throw(ArgumentError("the harmonic trap breaks translation invariance, so it needs a FiniteChain, got $lattice"))
+
+"""
+    harmonic_trap(V, elt, symmetry, lattice::FiniteChain; cutoff=2)
+
+The one-body term `Σₙₘ Vₙₘ ψₙ⁺ψₘ`, for a symmetric matrix `V` with `Vₙₘ = 0` for `|n - m| > 4`,
+as a sum of local operators (one per term, as in `@mpoham`).
+"""
+function harmonic_trap(V::AbstractMatrix, elt::Type{<:Number}, symmetry::Type{<:Sector},
+                       lattice::FiniteChain; cutoff=2)
+    w = length(h6) - 2
+    number = a_number(elt, symmetry; cutoff=cutoff)
+    hopping = a_plusmin(elt, symmetry; cutoff=cutoff) + a_minplus(elt, symmetry; cutoff=cutoff) #a⁺ ⊗ a⁻ + a⁻ ⊗ a⁺
+    site(i) = i.coordinates[1]
+    terms = sum(vertices(lattice)) do i
+        return V[site(i), site(i)]*MPSKitModels.LocalOperator(number, i)
+    end
+    for k=1:w
+        terms += sum(k_neighbours(k, lattice)) do (i, j)
+            return V[site(i), site(j)]*MPSKitModels.LocalOperator(hopping, i, j)
+        end
+    end
+    return terms
+end
+
+"""
+    onebody_mpo_hamiltonian(W, V, cre, ann, num)
+
+Finite chain MPO of `H_W + Σₙₘ Vₙₘ a⁺ₙ aₘ`, where `H_W` is the translation invariant Hamiltonian
+with Jordan form MPO matrix `W` (see [`exact_mpo_matrix`](@ref)) and `V` is a symmetric, banded
+matrix with `Vₙₘ = 0` for `|n - m| > w`.  `cre`, `ann`, `num` are the MPO entries of a⁺, a and a⁺a.
+
+The one-body term gets 2w virtual levels of its own: "a⁺ was emitted d sites ago" and "a was
+emitted d sites ago", for d = 1, …, w.  They are opened with a⁺ or a, carried along with the
+identity, and closed at site m with V[m-d, m] a or V[m-d, m] a⁺; the diagonal goes into the on-site
+block.  Nothing is compressed, so the bond dimension is that of `W` plus 2w.
+"""
+function onebody_mpo_hamiltonian(W::AbstractMatrix, V::AbstractMatrix, cre, ann, num)
+    L = size(V, 1)
+    w = maximum(abs(i - j) for i in 1:L, j in 1:L if !iszero(V[i, j]); init = 0)
+    nW = size(W, 1)                        # 1 = not started, nW = done
+    n = nW + 2w
+    P(d) = nW - 1 + d                      # a⁺ was emitted d sites ago
+    Q(d) = nW - 1 + w + d                  # a was emitted d sites ago
+    id = W[1, 1]                           # the identity, stored as a number
+
+    Ws = map(1:L) do m
+        Wm = similar(W, n, n)
+        fill!(Wm, missing)
+        Wm[1:(nW - 1), 1:(nW - 1)] = W[1:(nW - 1), 1:(nW - 1)]
+        Wm[1:(nW - 1), n] = W[1:(nW - 1), nW]
+        Wm[n, n] = W[nW, nW]
+        # the on-site block of W is a tensor or missing, never a multiple of the identity, since
+        # exact_mpo_data rejects terms that start with the identity
+        D = W[1, nW]
+        Wm[1, n] = ismissing(D) ? V[m, m] * num : D + V[m, m] * num
+        Wm[1, P(1)] = cre
+        Wm[1, Q(1)] = ann
+        for d in 1:w
+            if d < w
+                Wm[P(d), P(d + 1)] = id
+                Wm[Q(d), Q(d + 1)] = id
+            end
+            if m - d >= 1
+                Wm[P(d), n] = V[m - d, m] * ann
+                Wm[Q(d), n] = V[m - d, m] * cre
+            end
+        end
+        return Wm
+    end
+    return FiniteMPOHamiltonian([m == 1 ? Ws[m][1:1, :] : m == L ? Ws[m][:, end:end] : Ws[m] for m in 1:L])
+end
+
+const LL_TRAP_DOC = """
+MPO for the hamiltonian of the Lieb-Liniger model in a harmonic trap, in the basis of D6 wavelets,
+on a finite chain.  The Hamiltonian is that of `LL_D6` plus the trap,
+
+H = 2³ʳ Σₙₘ (ψₙʳ)⁺ Kₙₘ ψₘʳ + 2²ʳc Σₙₘₗₖ Γ₄[m-n][l-n][k-n] (ψₙʳ)⁺ (ψₘʳ)⁺ ψₗʳ ψₖʳ - 2ʳμ Σₙ (ψₙʳ)⁺ ψₙʳ
+    + 2ʳ Σₙₘ Vₙₘ (ψₙʳ)⁺ ψₘʳ,
+
+where Vₙₘ = ∫ V(x) sₙʳ(x) sₘʳ(x) dx is the matrix of V(x) = ½ω²(x - x₀)², see [`trap_matrix`](@ref).
+As for `LL_D6`, this is 2ʳ times the continuum Hamiltonian.  The site i of the chain holds the mode
+n = i - 1, and by default the trap is centred on the chain (`x0 = nothing`).
+
+`LL_D6_trap` adds the trap terms to those of `LL_D6`, one by one, before building the MPO, and
+`LL_D6_trap_minimal` adds them to the MPO of `LL_D6_minimal` with 8 extra virtual levels (see
+[`onebody_mpo_hamiltonian`](@ref)).  They are the same operator, and
+`exact_model(LL_D6_trap_minimal) === LL_D6_trap`.  The lattice must be a `FiniteChain`.
+"""
+
+"""
+    LL_D6_trap([elt::Type{<:Number}=ComplexF64,] [symmetry::Type{<:Sector}=Trivial,]
+               lattice::FiniteChain;
+               μ=2.0, c=1.0, r=0.0, cutoff=2, ω=1.0, x0=nothing)
+
+$LL_TRAP_DOC
+"""
+function LL_D6_trap end
+function LL_D6_trap(lattice::AbstractLattice; kwargs...)
+    return LL_D6_trap(ComplexF64, Trivial, lattice; kwargs...)
+end
+function LL_D6_trap(symmetry::Type{<:Sector}, lattice::AbstractLattice; kwargs...)
+    return LL_D6_trap(ComplexF64, symmetry, lattice; kwargs...)
+end
+function LL_D6_trap(elt::Type{<:Number}, lattice::AbstractLattice; kwargs...)
+    return LL_D6_trap(elt, Trivial, lattice; kwargs...)
+end
+function LL_D6_trap(elt::Type{<:Number}, symmetry::Type{<:Sector}, lattice::AbstractLattice;
+                    μ=2.0, c=1.0, r=0.0, cutoff=2, ω=1.0, x0=nothing)
+    check_trap_lattice(lattice)
+    V = rmul!(trap_matrix(length(lattice); ω, x0, r), 2^r)
+    trap = harmonic_trap(V, elt, symmetry, lattice; cutoff)
+    return LL_D6_hamiltonian(trap, elt, symmetry, lattice; μ, c, r, cutoff)
+end
+
+"""
+    LL_D6_trap_minimal([elt::Type{<:Number}=ComplexF64,] [symmetry::Type{<:Sector}=Trivial,]
+                       lattice::FiniteChain;
+                       μ=2.0, c=1.0, r=0.0, cutoff=2, ω=1.0, x0=nothing, rtol=1e-13, verbose=false)
+
+$LL_TRAP_DOC
+"""
+function LL_D6_trap_minimal end
+function LL_D6_trap_minimal(lattice::AbstractLattice; kwargs...)
+    return LL_D6_trap_minimal(ComplexF64, Trivial, lattice; kwargs...)
+end
+function LL_D6_trap_minimal(symmetry::Type{<:Sector}, lattice::AbstractLattice; kwargs...)
+    return LL_D6_trap_minimal(ComplexF64, symmetry, lattice; kwargs...)
+end
+function LL_D6_trap_minimal(elt::Type{<:Number}, lattice::AbstractLattice; kwargs...)
+    return LL_D6_trap_minimal(elt, Trivial, lattice; kwargs...)
+end
+function LL_D6_trap_minimal(elt::Type{<:Number}, symmetry::Type{<:Sector}, lattice::AbstractLattice;
+                            μ=2.0, c=1.0, r=0.0, cutoff=2, ω=1.0, x0=nothing, rtol::Real=1.0e-13,
+                            verbose::Bool=false)
+    check_trap_lattice(lattice)
+    symmetry === Trivial ||
+        throw(ArgumentError("only Trivial symmetry is implemented, got $symmetry"))
+    _, ops, index = boson_alphabet(elt, cutoff, 2, 2)
+    coeffs, R = LL_terms(K6, Γ4_D6, index; μ = μ, c = c, r = r)
+    L = length(lattice)
+    L > R || throw(ArgumentError("chain of length $L is shorter than the range $R"))
+    W = exact_mpo_matrix(coeffs, ops, R; elt = elt, rtol = rtol, verbose = verbose)
+    V = rmul!(trap_matrix(L; ω, x0, r), 2^r)
+    cre, ann, num = (mpo_entry(ops[index[pq]], elt) for pq in ((1, 0), (0, 1), (1, 1)))
+    return onebody_mpo_hamiltonian(W, V, cre, ann, num)
+end
+
+"""
+    exact_model(model)
+
+The `@mpoham` constructor of the same Hamiltonian as `model`: `LL_D6` for `LL_D6_minimal`,
+`LL_D8` for `LL_D8_minimal`, and `model` itself for any other constructor.
+
+Optimize with the minimal MPO, which is much faster, and evaluate the final energies with
+`exact_model(model)`, whose MPO is built term by term without the compression of
+[`exact_mpo_data`](@ref), so that reported energies are variational independently of it.
+"""
+exact_model(model) = model
+exact_model(::typeof(LL_D6_minimal)) = LL_D6
+exact_model(::typeof(LL_D8_minimal)) = LL_D8
+exact_model(::typeof(LL_D6_trap_minimal)) = LL_D6_trap

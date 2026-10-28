@@ -16,7 +16,8 @@ using HDF5
 ################# Exports ###################
 #models
 export LL_D6, LL_D8, quad_model, quad_model_D8
-export LL_D6_minimal, LL_D8_minimal, LL_wavelet_minimal
+export LL_D6_minimal, LL_D8_minimal, LL_wavelet_minimal, exact_model
+export LL_D6_trap, LL_D6_trap_minimal
 
 #refinement
 export MPSrefine, trunc_bonds, single_site, refinement_alg, refine_optim

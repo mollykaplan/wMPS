@@ -27,6 +27,13 @@ end
     @test_throws ArgumentError model(FiniteChain(3))    #shorter than the interaction range
 end
 
+@testset "exact_model" begin
+    @test exact_model(LL_D6_minimal) === LL_D6
+    @test exact_model(LL_D8_minimal) === LL_D8
+    @test exact_model(LL_D6) === LL_D6
+    @test exact_model(quad_model) === quad_model
+end
+
 #energy density of the product state ⊗ₙ |φ⟩, straight from the definition of H (see LL_terms)
 function product_energy(K, Γ4, m; μ, c, r)
     w = (size(Γ4, 1) - 1) ÷ 2

@@ -17,7 +17,8 @@ relerr(E) = abs((E - exact) / exact)
 H = LL_D6_minimal(; μ, c, r, cutoff=dmax)
 ψ0 = InfiniteMPS(ℂ^(dmax + 1), ℂ^D)
 
-#each history is an array with columns (wall time in s, energy density, error)
+#each history is an array with columns (wall time in s, energy density, error), with the energies
+#of the minimal MPO used for the optimization
 ψ, _, _, hist_vumps = find_groundstate_t(ψ0, H, VUMPS(; tol=1e-3, verbosity=1))
 alg = GradientGrassmann(; method=OptimKit.LBFGS(100; gradtol=1e-5, maxiter=500, verbosity=1))
 ψ, _, hist_lbfgs = find_groundstate_t(ψ, H, alg)
@@ -32,4 +33,7 @@ plot!(hist[nv:end, 1], relerr.(hist[nv:end, 2]), label="L-BFGS")
 xlabel!("time (s)")
 ylabel!(L"|E - E_{exact}| / |E_{exact}|")
 savefig(joinpath(@__DIR__, "timing_histories.png"))
-println("final relative error: $(relerr(hist[end, 2])), total time $(hist[end, 1]) s")
+
+#the final energy is evaluated with the exact MPO, LL_D6
+E = real(expectation_value(ψ, LL_D6(; μ, c, r, cutoff=dmax)))
+println("final relative error: $(relerr(E)), total time $(hist[end, 1]) s")

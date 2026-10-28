@@ -6,7 +6,7 @@ A wavelet MPS (wMPS) is a matrix product state whose sites are the modes of a su
 
 The package includes:
 
-- MPO Hamiltonians for the Lieb-Liniger model in the Daubechies D6 and D8 wavelet bases (`LL_D6`, `LL_D8`), exact minimal-bond-dimension versions of these (`LL_D6_minimal`, `LL_D8_minimal`, `LL_wavelet_minimal`), and a quadratic test model (`quad_model`, `quad_model_D8`)
+- MPO Hamiltonians for the Lieb-Liniger model in the Daubechies D6 and D8 wavelet bases (`LL_D6`, `LL_D8`), exact minimal-bond-dimension versions of these (`LL_D6_minimal`, `LL_D8_minimal`, `LL_wavelet_minimal`), the D6 model in a harmonic trap V(x) = ½ω²(x - x₀)² on a finite chain (`LL_D6_trap`, `LL_D6_trap_minimal`), and a quadratic test model (`quad_model`, `quad_model_D8`)
 - MPS refinement from one resolution to the next (`MPSrefine`, `single_site`, `refinement_alg`, `refine_optim`)
 - Correlation functions (`correlator_x`, `density_correlator`)
 - Versions of the VUMPS and GradientGrassmann ground-state solvers that record timing (`find_groundstate_t`, `add_histories`, `add_histories_kf`)
@@ -16,6 +16,8 @@ The package includes:
 ```julia
 ] dev /path/to/wMPS
 ```
+
+wMPS uses the `dense-blas` branch of [AntoineTilloy/MPSKit.jl](https://github.com/AntoineTilloy/MPSKit.jl/tree/dense-blas), which makes contractions with large MPOs much faster. With Julia ≥ 1.11 the package's own environment and `examples/` pick it up from their `[sources]` entries. In any other environment where you `dev` wMPS, or on Julia 1.10, add it there with `] add https://github.com/AntoineTilloy/MPSKit.jl.git#dense-blas`.
 
 ## The model
 
@@ -45,7 +47,9 @@ and the positional arguments `(elt=ComplexF64, symmetry=Trivial, lattice=Infinit
 | D6      | `LL_D6`       | 562            | `LL_D6_minimal`   | 45             |
 | D8      | `LL_D8`       | 2466           | `LL_D8_minimal`   | 84             |
 
-The minimal MPOs are the same operator, reproduced to floating point round-off, and are much faster both to build and to optimize with (VUMPS is about 9× faster for D6). `LL_D6` and `LL_D8` build the MPO term by term and are kept as an independent reference and to reproduce the original computations; `LL_D8` in particular takes a long time to build. `LL_wavelet_minimal(K, Γ4, ...)` builds the same Hamiltonian for any wavelet order, given its coefficients.
+The minimal MPOs are the same operator, reproduced to floating point round-off, and are much faster both to build and to optimize with (VUMPS is about 9× faster for D6). `LL_D6` and `LL_D8` build the MPO term by term and are kept as an independent reference and to reproduce the original computations; building them is quick, but optimizing with them is slow, `LL_D8` in particular. `LL_wavelet_minimal(K, Γ4, ...)` builds the same Hamiltonian for any wavelet order, given its coefficients.
+
+**Reporting energies.** To keep every reported energy exactly variational, the examples optimize with the minimal MPOs (VUMPS, DMRG, GradientGrassmann) but always evaluate the final energies with the corresponding `@mpoham` MPO, which is built term by term and does not depend on the compression used to build the minimal one. `exact_model(model)` gives that constructor (`exact_model(LL_D6_minimal) === LL_D6`), and `refinement_alg` and `refine_optim` use it for the energies they print. Energies recorded *during* an optimization, e.g. in the `history` returned by `find_groundstate_t`, are those of the MPO being optimized. With the `dense-blas` branch of [AntoineTilloy/MPSKit.jl](https://github.com/AntoineTilloy/MPSKit.jl/tree/dense-blas), evaluating one energy at bond dimension 12 takes about 0.5 s with `LL_D6` and 12 s with `LL_D8`; with the registered MPSKit, `LL_D8` takes over half an hour.
 
 ## Usage
 
@@ -57,7 +61,7 @@ using wMPS, MPSKit, TensorKit, OptimKit
 # ground state at resolution r = 2
 H = LL_D6_minimal(; μ, c, r=2, cutoff=dmax)
 ψ, = find_groundstate(InfiniteMPS(ℂ^(dmax + 1), ℂ^12), H, VUMPS(; tol=1e-6))
-E = real(expectation_value(ψ, H))     # energy density
+E = real(expectation_value(ψ, LL_D6(; μ, c, r=2, cutoff=dmax)))     # energy density, with the exact MPO
 
 # correlation functions at x = 1.0, for a state at resolution 2
 g1 = correlator_x(1.0, ψ, wMPS.dx, 2)          # ⟨ψ⁺(x)ψ(0)⟩
@@ -76,7 +80,7 @@ At low resolution, optimizing directly at the target r with VUMPS or L-BFGS is f
 
 - `find_groundstate_t(ψ, H, ::VUMPS)` returns `(ψ, envs, ϵ, history)`, and `find_groundstate_t(ψ, H, ::GradientGrassmann)` returns `(ψ, envs, history)`. The GradientGrassmann version only supports `OptimKit.LBFGS` as its method.
 - A `history` array has one row per iteration and the columns (wall time in s, energy density, error), where the error is the Galerkin error for VUMPS and the gradient norm for L-BFGS. Histories of successive runs can be concatenated with `add_histories` (drops the first row of the second history) or `add_histories_kf` (keeps it).
-- `refine_optim` returns `(states, history)`: `states[i, :, :, :]` is the AL tensor at resolution `r_start + i`, and `history` is the combined history of all L-BFGS runs, with the refinement time included.
+- `refine_optim` returns `(states, history)`: `states[i, :, :, :]` is the AL tensor at resolution `r_start + i`, and `history` is the combined history of all L-BFGS runs, with the refinement time included. The energies it prints at the end of each resolution are evaluated with `exact_model(model)`, while those in `history` are recorded with `model` during the optimization.
 
 ### Limitations
 

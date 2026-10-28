@@ -15,14 +15,16 @@ exact = -0.230661378983648
 relerr(E) = abs((E - exact) / exact)
 
 for (name, model) in (("D6", LL_D6_minimal), ("D8", LL_D8_minimal))
+    #optimize with the minimal MPO, and evaluate energies with the exact one (LL_D6 or LL_D8)
     H = model(; μ, c, r, cutoff=dmax)
+    Hexact = exact_model(model)(; μ, c, r, cutoff=dmax)
     ψ0 = InfiniteMPS(ℂ^(dmax + 1), ℂ^D) #random initial state
 
     #a few VUMPS iterations to get close to the ground state, then L-BFGS to converge
     ψ, = find_groundstate(ψ0, H, VUMPS(; tol=1e-3, verbosity=1))
-    E_vumps = real(expectation_value(ψ, H))
+    E_vumps = real(expectation_value(ψ, Hexact))
     ψ, = find_groundstate(ψ, H, GradientGrassmann(; method=OptimKit.LBFGS(100; gradtol=1e-5, maxiter=500, verbosity=1)))
-    E = real(expectation_value(ψ, H)) #expectation_value(ψ, H) is the energy density
+    E = real(expectation_value(ψ, Hexact)) #expectation_value(ψ, Hexact) is the energy density
 
     println("$name, r = $r, D = $D:")
     println("  after VUMPS:  E = $E_vumps, relative error $(relerr(E_vumps))")
