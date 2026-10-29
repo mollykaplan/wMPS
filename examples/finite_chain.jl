@@ -1,103 +1,84 @@
 #The wavelet Lieb-Liniger model on a finite chain, with DMRG, compared with the Tonks-Girardeau limit.
-#Run from the package root with `julia --project=examples examples/finite_chain.jl`.
+#Run from the package root with `julia --project=examples examples/finite_chain.jl`. The ground
+#states of each model are computed by their own Julia process, in parallel, and saved in
+#examples/finite_chain_data; those of one model can be (re)computed alone with e.g.
+#`julia --project=examples examples/finite_chain.jl trap`.
 
 using wMPS, MPSKit, MPSKitModels, TensorKit
-using Plots
+using Plots, Serialization
 
 #parameters
 c = 200.0 #strong repulsion, close to the Tonks-Girardeau limit c → ∞
+N = 10 #number of particles
 dmax = 2 #maximum number of bosons per site
-D = 16 #maximal MPS bond dimension
+D = 16 #maximal MPS bond dimension, summed over the particle number sectors
 l = 16 #length of the box, in continuum units
-resolutions = (1, 3, 5) #the modes are 2^-r apart, so the number of sites L = l 2^r grows with r
+rmin, rmax = 1, 5 #the modes are 2^-r apart, so the number of sites L = l 2^r grows with r
+#the ground state at the lowest resolution is found from a random state, and each of the following
+#ones from the previous one, refined to the next resolution with MPSrefine_finite
 
-#mode i of the chain (n = i - 1) has its centre of mass at (i - 1 + s̄) / 2^r, with s̄ = ∫ x s(x)² dx;
-#the density 2^r nᵢ is plotted at these points
-s̄ = wMPS.scaling_moments(wMPS.h6, 1)[2, 5]
-positions(L, r) = ((1:L) .- 1 .+ s̄) ./ 2^r
+#the Hamiltonian conserves the particle number, so finite_groundstates builds it with U(1) symmetry
+#and looks for the ground state directly in the sector with N particles. The chemical potential then
+#only shifts the energy by -μN, and is set to zero
+μ = 0.0
 
-#ground state with DMRG, and the occupation of each mode
-function groundstate(H, L)
-    ψ, = find_groundstate(FiniteMPS(L, ℂ^(dmax + 1), ℂ^D), H, DMRG(; tol=1e-5, maxiter=100, verbosity=1))
-    n = [real(expectation_value(ψ, i => a_number(; cutoff=dmax))) for i in 1:L]
-    return ψ, n
-end
-
-################################################################################################
-#The Tonks-Girardeau limit c → ∞: N free fermions, filling the N lowest levels of -∂ₓ² + V(x)
-#(the kinetic term ∫ ∂ₓψ⁺∂ₓψ corresponds to a mass 1/2)
-################################################################################################
-
-#hard wall box [0, l]: levels (jπ/l)², eigenfunctions √(2/l) sin(jπx/l), j = 1, 2, …
-box_levels(N) = [(j * π / l)^2 for j in 1:N]
-tg_box_density(x, N) = sum(2 / l * sin(j * π * x / l)^2 for j in 1:N)
-
-#harmonic trap ½ω²(x - x₀)²: an oscillator with frequency Ω = √2 ω and length b = √(2/Ω), levels
-#Ω(j + ½), j = 0, 1, …; the eigenfunctions are Hermite functions, built with their recursion
-trap_levels(N, ω) = [sqrt(2) * ω * (j + 1 / 2) for j in 0:(N - 1)]
-function tg_trap_density(x, N, ω, x0)
-    b = sqrt(2 / (sqrt(2) * ω))
-    ξ = (x - x0) / b
-    φprev, φ = 0.0, π^(-1 / 4) * exp(-ξ^2 / 2)
-    ρ = 0.0
-    for j in 0:(N - 1)
-        ρ += φ^2 / b
-        φprev, φ = φ, sqrt(2 / (j + 1)) * ξ * φ - sqrt(j / (j + 1)) * φprev
-    end
-    return ρ
-end
-
-xs = range(0, l, length=1000)
-
-################################################################################################
-#Finite chain with hard wall boundary conditions, aka an infinite well
-################################################################################################
-
-#μ lies halfway between the 10th and 11th levels of the box, so that N = 10 in the TG limit
-μ = (10.5π / l)^2
-Ntg = count(<(μ), box_levels(20))
+#harmonic trap V(x) = ½ω²(x - x₀)², in the middle of the box; x₀ is fixed, so that the trap is the
+#same at every resolution. In the TG limit the N = 10 particles fill the levels up to ≈ 10√2 ω, so
+#the gas extends to |x - x₀| ≈ √(2 × 10√2)/ω ≈ 5.3, well inside the box
+ω = 1.0
+x0 = l / 2
 
 #both LL_D6 and LL_D6_minimal work on finite chains: only the terms that fit inside the chain are
 #kept, which amounts to hard wall boundary conditions at the level of the wavelet modes. They are
-#the same operator, but the minimal MPO has bond dimension 45 instead of 562, so DMRG is much faster.
-#We optimize with the minimal MPO, and evaluate the final energies with the exact one, LL_D6
-plt = plot(xlabel="x", ylabel="density", title="infinite well, c = $c")
-for r in resolutions
-    L = round(Int, l * 2^r)
-    ψ, n = groundstate(LL_D6_minimal(FiniteChain(L); μ, c, r, cutoff=dmax), L)
-    #expectation_value is 2^r times the energy of the continuum Hamiltonian, including -μN
-    E = real(expectation_value(ψ, LL_D6(FiniteChain(L); μ, c, r, cutoff=dmax))) / 2^r
-    #the modes are orthonormal, so the total particle number is the sum of the occupations; H
-    #conserves it, so the ground state has a definite number of particles
-    println("infinite well, r = $r, L = $L: N = $(sum(n)), E = $E")
-    plot!(plt, positions(L, r), 2^r .* n, label="r = $r", marker=(r == first(resolutions) ? :circle : :none))
+#the same operator, but the minimal MPO has bond dimension 45 instead of 562 (53 instead of 582 with
+#the trap), so DMRG is much faster. We optimize with the minimal MPO, and evaluate the final
+#energies with the exact one, exact_model(model)
+models = Dict("well" => (LL_D6_minimal, (; μ, c)),
+              "trap" => (LL_D6_trap_minimal, (; μ, c, ω, x0)))
+
+datadir = joinpath(@__DIR__, "finite_chain_data")
+datafile(name, r) = joinpath(datadir, "$(name)_r$r.jls")
+
+#the ground states of a single model with DMRG, from rmin to rmax, when called by the loop below. At
+#rmin DMRG starts from a random state, and at each following resolution from the previous ground
+#state, refined with MPSrefine_finite (see finite_groundstates); each one is saved as soon as it is
+#computed
+if length(ARGS) == 1
+    name = only(ARGS)
+    model, kw = models[name]
+    finite_groundstates(model, l, N, rmin:rmax; D, cutoff=dmax, label=name,
+                        callback=result -> serialize(datafile(name, result.r), result), kw...)
+    exit()
 end
-println("infinite well, Tonks-Girardeau: N = $Ntg, E = $(sum(box_levels(Ntg)) - μ * Ntg)")
-plot!(plt, xs, tg_box_density.(xs, Ntg), linestyle=:dash, color=:black, label="Tonks-Girardeau")
-savefig(plt, joinpath(@__DIR__, "infinite_well_density.png"))
+
+#all ground states, one process per model
+mkpath(datadir)
+julia = `$(Base.julia_cmd()) --project=$(Base.active_project()) $(@__FILE__)`
+jobs = [run(pipeline(`$julia $name`; stdout, stderr); wait=false) for name in keys(models)]
+foreach(wait, jobs)
 
 ################################################################################################
-#The same gas in a harmonic trap V(x) = ½ω²(x - x₀)², in the middle of the box
+#Plots of the density
 ################################################################################################
 
-ω = 1.0
-x0 = l / 2 #fixed, so that the trap is the same at every resolution
+xs = range(0, l, length=1000)
+#the Tonks-Girardeau limit c → ∞: N free fermions in the N lowest levels
+tg = Dict("well" => (sum(box_levels(N, l)), x -> tg_box_density(x, N, l)),
+          "trap" => (sum(trap_levels(N, ω)), x -> tg_trap_density(x, N, ω, x0)))
+titles = Dict("well" => "infinite well, c = $c", "trap" => "harmonic trap, ω = $ω, c = $c")
+files = Dict("well" => "infinite_well_density.png", "trap" => "harmonic_trap_density.png")
 
-#μ lies halfway between the 10th and 11th levels of the trap, so that N = 10 in the TG limit; the
-#gas then extends to |x - x₀| ≈ √(2μ)/ω ≈ 5.3, well inside the box
-μtrap = 10 * sqrt(2) * ω
-Ntrap = count(<(μtrap), trap_levels(20, ω))
-
-#as above, we optimize with the minimal MPO (bond dimension 53 instead of 582), and evaluate the
-#energy with the exact one, LL_D6_trap
-plt = plot(xlabel="x", ylabel="density", title="harmonic trap, ω = $ω, c = $c")
-for r in resolutions
-    L = round(Int, l * 2^r)
-    ψ, n = groundstate(LL_D6_trap_minimal(FiniteChain(L); μ=μtrap, c, r, cutoff=dmax, ω, x0), L)
-    E = real(expectation_value(ψ, LL_D6_trap(FiniteChain(L); μ=μtrap, c, r, cutoff=dmax, ω, x0))) / 2^r
-    println("harmonic trap, r = $r, L = $L: N = $(sum(n)), E = $E")
-    plot!(plt, positions(L, r), 2^r .* n, label="r = $r", marker=(r == first(resolutions) ? :circle : :none))
+for name in keys(models)
+    plt = plot(xlabel="x", ylabel="density", title=titles[name], legend=:bottom)
+    for r in rmin:rmax
+        (; L, n, E, ψ) = deserialize(datafile(name, r))
+        println("$name, r = $r, L = $L: N = $(sum(n)), E = $E")
+        #the continuum density ρ(x) = ⟨ψ⁺(x)ψ(x)⟩, with the same spacing 2^-9 in x at every resolution
+        x, ρ = continuum_density(ψ, r; J=9 - r)
+        plot!(plt, x, ρ, label="r = $r, E = $(round(E; digits=2))")
+    end
+    E, ρ = tg[name]
+    println("$name, Tonks-Girardeau: N = $N, E = $E")
+    plot!(plt, xs, ρ.(xs), linestyle=:dash, color=:black, label="Tonks-Girardeau, E = $(round(E; digits=2))")
+    savefig(plt, joinpath(@__DIR__, files[name]))
 end
-println("harmonic trap, Tonks-Girardeau: N = $Ntrap, E = $(sum(trap_levels(Ntrap, ω)) - μtrap * Ntrap)")
-plot!(plt, xs, tg_trap_density.(xs, Ntrap, ω, x0), linestyle=:dash, color=:black, label="Tonks-Girardeau")
-savefig(plt, joinpath(@__DIR__, "harmonic_trap_density.png"))

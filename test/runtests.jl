@@ -33,7 +33,10 @@ Random.seed!(1234)
     @testset "models" begin include("test_models.jl") end
     @testset "minimal MPOs" begin include("test_minimal.jl") end
     @testset "harmonic trap" begin include("test_trap.jl") end
+    @testset "U(1) symmetry" begin include("test_u1.jl") end
     @testset "refinement" begin include("test_refinement.jl") end
+    @testset "finite refinement" begin include("test_refine_finite.jl") end
+    @testset "finite chains" begin include("test_finite.jl") end
     @testset "correlators" begin include("test_correlators.jl") end
     @testset "timing" begin include("test_timing.jl") end
     @testset "Aqua" begin include("test_aqua.jl") end

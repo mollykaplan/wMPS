@@ -7,8 +7,9 @@ A wavelet MPS (wMPS) is a matrix product state whose sites are the modes of a su
 The package includes:
 
 - MPO Hamiltonians for the Lieb-Liniger model in the Daubechies D6 and D8 wavelet bases (`LL_D6`, `LL_D8`), exact minimal-bond-dimension versions of these (`LL_D6_minimal`, `LL_D8_minimal`, `LL_wavelet_minimal`), the D6 model in a harmonic trap V(x) = ½ω²(x - x₀)² on a finite chain (`LL_D6_trap`, `LL_D6_trap_minimal`), and a quadratic test model (`quad_model`, `quad_model_D8`)
-- MPS refinement from one resolution to the next (`MPSrefine`, `single_site`, `refinement_alg`, `refine_optim`)
-- Correlation functions (`correlator_x`, `density_correlator`)
+- MPS refinement from one resolution to the next (`MPSrefine`, `single_site`, `refinement_alg`, `refine_optim`), and its finite chain version (`MPSrefine_finite`)
+- Correlation functions: the one-body density matrix ⟨ψ⁺(x)ψ(0)⟩ of an infinite state and the density of a finite chain state (`continuum_density`), and the density-density correlation function ⟨ψ⁺(x)ψ⁺(0)ψ(x)ψ(0)⟩ of an infinite state (`nn_correlator`)
+- Ground states at fixed particle number on a finite chain, refined from one resolution to the next (`finite_groundstates`), and the Tonks-Girardeau limit to compare them with (`box_levels`, `tg_box_density`, `trap_levels`, `tg_trap_density`)
 - Versions of the VUMPS and GradientGrassmann ground-state solvers that record timing (`find_groundstate_t`, `add_histories`, `add_histories_kf`)
 
 ## Installation
@@ -38,7 +39,7 @@ All model constructors take the keyword arguments
 | `r`      | resolution.                                           | 0       |
 | `cutoff` | maximum number of bosons per site (physical dimension `cutoff + 1`) | 2 |
 
-and the positional arguments `(elt=ComplexF64, symmetry=Trivial, lattice=InfiniteChain(1))`, as in MPSKitModels. `lattice` can be an `InfiniteChain(1)` or a `FiniteChain(L)`; only `Trivial` symmetry is supported.
+and the positional arguments `(elt=ComplexF64, symmetry=Trivial, lattice=InfiniteChain(1))`, as in MPSKitModels. `lattice` can be an `InfiniteChain(1)` or a `FiniteChain(L)`. `symmetry` can be `Trivial` or, since the Lieb-Liniger Hamiltonian conserves the particle number, `U1Irrep` (not for `quad_model`). With `U1Irrep` the physical space is `U1Space(n => 1 for n in 0:cutoff)`, and on a finite chain DMRG can look for the ground state directly in the sector with N particles, e.g. starting from `FiniteMPS(L, P, V; right=U1Space(N => 1))` (see `examples/finite_chain.jl`). The minimal MPOs have the same bond dimension with either symmetry. On an `InfiniteChain` the U(1) MPO can be built, but VUMPS at a fixed density would need a unit cell with a shifted charge, which is not implemented here.
 
 ### Which constructor to use
 
@@ -63,9 +64,9 @@ H = LL_D6_minimal(; μ, c, r=2, cutoff=dmax)
 ψ, = find_groundstate(InfiniteMPS(ℂ^(dmax + 1), ℂ^12), H, VUMPS(; tol=1e-6))
 E = real(expectation_value(ψ, LL_D6(; μ, c, r=2, cutoff=dmax)))     # energy density, with the exact MPO
 
-# correlation functions at x = 1.0, for a state at resolution 2
-g1 = correlator_x(1.0, ψ, wMPS.dx, 2)          # ⟨ψ⁺(x)ψ(0)⟩
-g2 = density_correlator(1.0, ψ, wMPS.dx, 2)    # ⟨ψ⁺(x)ψ⁺(0)ψ(x)ψ(0)⟩
+# correlation functions of a state at resolution 2
+xs, g1 = continuum_density(ψ, 2, 10.0)             # ⟨ψ⁺(x)ψ(0)⟩ at x = t / 2^(r+J), 0 ≤ x ≤ 10 (J = 5 by default)
+xs, g2 = nn_correlator(ψ, 2, 10.0)                 # ⟨ψ⁺(x)ψ⁺(0)ψ(x)ψ(0)⟩ on the same grid
 
 # refine from r = 2 to r = 5, with 100 L-BFGS iterations at each new resolution
 states, history = refine_optim(ψ, 2, 3, μ, c, dmax, dmax + 1, 12, 100; model=LL_D6_minimal)
@@ -76,6 +77,14 @@ states, history = refine_optim(ψ, 2, 3, μ, c, dmax, dmax + 1, 12, 100; model=L
 
 At low resolution, optimizing directly at the target r with VUMPS or L-BFGS is fast, and refinement brings nothing. It pays off at high resolution (r ≈ 4-5 and above), where direct optimization from a random state becomes slow. Even there, it is better to run some optimization in between refinement steps, as `refine_optim` does, rather than to refine repeatedly with `refinement_alg` alone.
 
+### Finite chains
+
+`MPSrefine_finite(ψ, D)` refines a `FiniteMPS` on the L sites of a `FiniteChain(L)` at resolution r into one on the 2L sites of a `FiniteChain(2L)` at resolution r+1, the chains used by the finite chain models. A translation invariant state is not needed, so there is no `single_site` step. The circuit sends the scaling mode n onto the modes 2n, …, 2n+5 at the next resolution, so the two modes that fall past the right end of the chain are projected onto the vacuum. It returns `(ψf, p)`, with p the probability kept by that projection, which is close to 1 when the density at the wall is small. The circuit conserves the particle number, and works with `U1Irrep` states. Since the space at resolution r is contained in that at r+1, the refined state has the same continuum energy, up to that projection, and is a good starting point for DMRG at r+1.
+
+`finite_groundstates(model, l, N, rs; D, cutoff, kwargs...)` does this for a box of length l at the resolutions r in `rs`: it looks for the ground state with N particles with DMRG, starting from a random state at the lowest resolution, and from the refined previous ground state at each following one. It returns, for each r, the state, the occupations of the modes and the continuum energy (evaluated with `exact_model(model)`).
+
+`continuum_density(ψ, r; J)` gives the density ρ(x) = ⟨ψ⁺(x)ψ(x)⟩ of a `FiniteMPS` at resolution r, on the grid x = t / 2^(r+J) over the whole chain, from the correlations ⟨aₙ⁺aₘ⟩ of the modes that overlap.
+
 ### Return values
 
 - `find_groundstate_t(ψ, H, ::VUMPS)` returns `(ψ, envs, ϵ, history)`, and `find_groundstate_t(ψ, H, ::GradientGrassmann)` returns `(ψ, envs, history)`. The GradientGrassmann version only supports `OptimKit.LBFGS` as its method.
@@ -84,8 +93,8 @@ At low resolution, optimizing directly at the target r with VUMPS or L-BFGS is f
 
 ### Limitations
 
-- The refinement circuit (`MPSrefine`, `refinement_alg`, `refine_optim`) is only implemented for D6 wavelets, so `model` should be a D6 model.
-- The correlators use a table of the D6 scaling function, so they are only valid for D6 states, and the `dx` argument must be the table spacing `wMPS.dx`.
+- The refinement circuit (`MPSrefine`, `MPSrefine_finite`, `refinement_alg`, `refine_optim`) is only implemented for D6 wavelets, so `model` should be a D6 model.
+- `continuum_density` and `nn_correlator` are only valid for D6 states, whose scaling function they compute exactly on a dyadic grid (`wMPS.scaling_function`). `nn_correlator` only takes states with `Trivial` symmetry.
 
 ## Examples
 
@@ -101,7 +110,7 @@ then open the worksheet `examples/wMPS_worksheet.ipynb`, which goes through grou
 | script                          | contents                                                        |
 |---------------------------------|-----------------------------------------------------------------|
 | `examples/groundstate.jl`       | D6 and D8 ground states, compared with the exact energy          |
-| `examples/finite_chain.jl`      | DMRG on a finite chain                                          |
+| `examples/finite_chain.jl`      | DMRG in an infinite well and a harmonic trap at fixed N (U(1)), refining between resolutions, compared with the Tonks-Girardeau limit |
 | `examples/custom_wavelet.jl`    | building the minimal MPO from your own coefficients              |
 | `examples/timing_histories.jl`  | convergence history of VUMPS followed by L-BFGS, versus time     |
 

@@ -133,6 +133,84 @@ function trunc_bonds(ψ, D ; alg_svd = DivideAndConquer(; driver = LAPACK()))
     return normalize!(ψ)
 end
 
+############ Refinement of a finite MPS #############
+
+"""
+Refine a finite MPS ψ at resolution r into a finite MPS at resolution r+1, with the same circuit as MPSrefine.
+
+ψ lives on the L sites of a FiniteChain(L), holding the scaling modes n = 0, …, L-1, and the output on the 2L sites
+of a FiniteChain(2L), holding the modes m = 0, …, 2L-1 at resolution r+1, as in the models on finite chains. Each
+site gets a wavelet mode in the vacuum, and the layers A1 (on each site), A2 (between neighbouring sites) and A3 (on
+each site) are applied as two-site gates, truncating with trscheme after each gate. The circuit maps the scaling
+mode n onto the modes 2n, …, 2n+5 at resolution r+1, so
+- a site in the vacuum is added on the left, whose two output modes are m = 0, 1;
+- the two output modes of the last site, m = 2L, 2L+1, fall outside the chain, and are projected onto the vacuum.
+They are the modes closest to the wall, so with hard wall boundaries the projection loses little.
+
+The circuit conserves the particle number, so ψ can have U1Irrep symmetry, and the output then has the same number
+of particles. The Fock space is truncated to the physical space of ψ (dmax = dim - 1 bosons per site), which is
+exact as long as no mode holds more than dmax particles.
+
+Inputs
+ψ = initial FiniteMPS, with the same physical space on every site
+D = maximal bond dimension of the output
+trscheme = truncation after each gate, by default truncrank(D)
+verbosity = prints the probability lost in the projection if ≥ 1
+
+Outputs
+ψf = normalized FiniteMPS on 2L sites, at resolution r+1
+p = probability that the projected modes are empty, i.e. the norm² of the output before normalization
+"""
+function MPSrefine_finite(ψ::FiniteMPS, D::Integer; trscheme=truncrank(D), verbosity=1)
+    L = length(ψ)
+    P = physicalspace(ψ, 1)
+    all(==(P), physicalspace(ψ)) || throw(ArgumentError("all sites must have the same physical space"))
+    d = dim(P)
+    elt = scalartype(ψ)
+    gates = [symmetric_operator(Afock(A, d), sectortype(P); cutoff=d - 1) for A in (A1, A2, A3)]
+
+    #a mode in the vacuum, on a bond with virtual space V
+    function vacuum_site(V)
+        arr = zeros(elt, dim(V), d, dim(V))
+        for a in 1:dim(V)
+            arr[a, 1, a] = 1
+        end
+        return TensorMap(arr, V ⊗ P ← V)
+    end
+
+    #the doubled chain: the site added on the left, then every site of ψ followed by its wavelet mode
+    V0 = left_virtualspace(ψ, 1)
+    As = [vacuum_site(V0), vacuum_site(V0)]
+    for i in 1:L
+        A = i < L ? ψ.AL[i] : ψ.AC[L]
+        push!(As, A, vacuum_site(right_virtualspace(A)))
+    end
+    ψ2 = FiniteMPS(As; normalize=true)
+    n = length(ψ2)
+
+    #a gate G acting on the sites (i, i+1), with the orthogonality centre on them
+    function apply_gate!(G, i)
+        @plansor θ[-1 -2 -3; -4] := ψ2.AC[i][-1 1; 2] * ψ2.AR[i + 1][2 3; -4] * G[-2 -3; 1 3]
+        U, S, Vt = svd_trunc!(permute(θ, ((1, 2), (3, 4))); trunc=trscheme)
+        normalize!(S)
+        ψ2.AC[i] = (U, complex(S))
+        ψ2.AC[i + 1] = (complex(S), permute(Vt, ((1, 2), (3,))))
+        return ψ2
+    end
+    foreach(i -> apply_gate!(gates[1], i), 1:2:n)
+    foreach(i -> apply_gate!(gates[2], i), 2:2:(n - 2))
+    foreach(i -> apply_gate!(gates[3], i), 1:2:n)
+
+    #project the last two modes onto the vacuum
+    e0 = Tensor([one(elt); zeros(elt, d - 1)], P)
+    @tensor M[-1; -2] := ψ2.AR[n - 1][-1 1; 2] * conj(e0[1]) * ψ2.AR[n][2 3; -2] * conj(e0[3])
+    Alast = ψ2.AC[n - 2] * M
+    p = real(dot(Alast, Alast))
+    verbosity >= 1 && println("Probability lost by projecting the last two modes onto the vacuum: $(1 - p)")
+    ψf = FiniteMPS([ψ2.AL[1:(n - 3)]..., Alast]; normalize=true)
+    return ψf, p
+end
+
 ############ Functions for making a single-site state #############
 
 """

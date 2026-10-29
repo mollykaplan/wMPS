@@ -22,7 +22,9 @@ end
     @test model(ComplexF64, InfiniteChain(1)) isa InfiniteMPOHamiltonian
     @test model(Trivial) isa InfiniteMPOHamiltonian
     @test model(FiniteChain(10)) isa FiniteMPOHamiltonian
-    @test_throws ArgumentError model(U1Irrep)
+    @test model(U1Irrep) isa InfiniteMPOHamiltonian
+    @test model(U1Irrep, FiniteChain(10)) isa FiniteMPOHamiltonian
+    @test_throws ArgumentError model(SU2Irrep)
     @test_throws ArgumentError model(InfiniteChain(2))
     @test_throws ArgumentError model(FiniteChain(3))    #shorter than the interaction range
 end

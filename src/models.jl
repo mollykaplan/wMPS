@@ -110,6 +110,19 @@ function a_ppmm_4(elt::Type{<:Number}=ComplexF64, ::Type{Trivial}=Trivial; cutof
     return MPSKitModels.contract_onesite(MPSKitModels.contract_onesite(a_plus(elt; cutoff=cutoff), a_plus(elt; cutoff=cutoff)), MPSKitModels.contract_onesite(a_min(elt; cutoff=cutoff), a_min(elt; cutoff=cutoff)))
 end
 
+#The operators above are built without symmetry. Every term of the Lieb-Liniger Hamiltonian
+#conserves the particle number, so they can be turned into U(1) symmetric operators, acting on the
+#physical space U1Space(n => 1 for n in 0:cutoff), whose basis is the Fock basis in the same order
+symmetric_operator(op::AbstractTensorMap, ::Type{Trivial}; cutoff::Integer=2) = op
+function symmetric_operator(op::AbstractTensorMap, ::Type{U1Irrep}; cutoff::Integer=2)
+    P = U1Space(n => 1 for n in 0:cutoff)
+    k = numout(op)
+    #TensorMap checks that the operator really is U(1) symmetric
+    return TensorMap(convert(Array, op), P^k ← P^k)
+end
+symmetric_operator(op::AbstractTensorMap, symmetry::Type{<:Sector}; kwargs...) =
+    throw(ArgumentError("only Trivial and U1Irrep symmetries are implemented, got $symmetry"))
+
 ################################################################################################
 #Defining the Lieb-Liniger Hamiltonian for D6 and D8, output is an MPO
 ################################################################################################
@@ -127,7 +140,9 @@ per site is the continuum energy density.
 and where r is the resolution.
 
 By default, the model is defined on an infinite chain with unit lattice spacing, without any symmetries and with
-`ComplexF64` entries of the tensors.
+`ComplexF64` entries of the tensors. The Hamiltonian conserves the particle number, and can also be built with `symmetry = U1Irrep`;
+the physical space is then `U1Space(n => 1 for n in 0:cutoff)`, and a finite chain ground state
+can be searched for directly in the sector with N particles.
 """
 
 ################################# N=6 Daubechies Wavelet ######################################
@@ -162,21 +177,26 @@ end
 function LL_D6_hamiltonian(extra, elt::Type{<:Number}, symmetry::Type{<:Sector}, lattice::AbstractLattice;
                            μ, c, r, cutoff)
     #all terms in the Hamiltonian
-    chem_pot = rmul!(a_number(elt, symmetry; cutoff=cutoff), -(2^r)*μ)
-    kinetic =  rmul!(a_plusmin(elt, symmetry; cutoff=cutoff)+ a_minplus(elt, symmetry; cutoff=cutoff), 2^(3*r))
-    kinetic_ss = rmul!(a_number(elt, symmetry; cutoff=cutoff), 2^(3*r))
-    interaction = rmul!(a_ppmm(elt, symmetry; cutoff=cutoff) +
-                    a_mmpp(elt, symmetry; cutoff=cutoff), 2^(2*r)*c) #a⁺ ⊗ a⁺ ⊗ a⁻ ⊗ a⁻ + a⁻ ⊗ a⁻ ⊗ a⁺ ⊗ a⁺
-    interaction_ss_2 = rmul!(a_ppmm_2mm(elt, symmetry; cutoff=cutoff) +
-                        a_ppmm_2pp(elt, symmetry; cutoff=cutoff), 2^(2*r)*c) #a⁺a⁺ ⊗ a⁻ ⊗ a⁻ + a⁻a⁻ ⊗ a⁺ ⊗ a⁺
-    interaction_ss_2pm = rmul!(a_ppmm_2pm(elt, symmetry; cutoff=cutoff) +
-                            a_ppmm_2mp(elt, symmetry; cutoff=cutoff), 2^(2*r)*c) #a⁺ ⊗ a⁺a⁻ ⊗ a⁻ + a⁻ ⊗ a⁺a⁻ ⊗ a⁺
-    interaction_ss_3 = rmul!(a_ppmm_3p(elt, symmetry; cutoff=cutoff) +
-                         a_ppmm_3m(elt, symmetry; cutoff=cutoff), 2^(2*r)*c) #a⁺a⁻a⁻ ⊗ a⁺ + a⁺a⁺a⁻ ⊗ a⁻
-    interaction_ss_3pm = rmul!(a_ppmm_3pm(elt, symmetry; cutoff=cutoff), 2^(2*r)*c) #a⁺a⁻ ⊗ a⁺a⁻
-    interaction_ss_3ppmm = rmul!(a_ppmm_3ppmm(elt, symmetry; cutoff=cutoff) +
-                            a_ppmm_3mmpp(elt, symmetry; cutoff=cutoff), 2^(2*r)*c) #a⁺a⁺ ⊗ a⁻a⁻ + a⁻a⁻ ⊗ a⁺a⁺
-    interaction_ss_4 = rmul!(a_ppmm_4(elt, symmetry; cutoff=cutoff), 2^(2*r)*c)
+    chem_pot = rmul!(a_number(elt; cutoff=cutoff), -(2^r)*μ)
+    kinetic =  rmul!(a_plusmin(elt; cutoff=cutoff)+ a_minplus(elt; cutoff=cutoff), 2^(3*r))
+    kinetic_ss = rmul!(a_number(elt; cutoff=cutoff), 2^(3*r))
+    interaction = rmul!(a_ppmm(elt; cutoff=cutoff) +
+                    a_mmpp(elt; cutoff=cutoff), 2^(2*r)*c) #a⁺ ⊗ a⁺ ⊗ a⁻ ⊗ a⁻ + a⁻ ⊗ a⁻ ⊗ a⁺ ⊗ a⁺
+    interaction_ss_2 = rmul!(a_ppmm_2mm(elt; cutoff=cutoff) +
+                        a_ppmm_2pp(elt; cutoff=cutoff), 2^(2*r)*c) #a⁺a⁺ ⊗ a⁻ ⊗ a⁻ + a⁻a⁻ ⊗ a⁺ ⊗ a⁺
+    interaction_ss_2pm = rmul!(a_ppmm_2pm(elt; cutoff=cutoff) +
+                            a_ppmm_2mp(elt; cutoff=cutoff), 2^(2*r)*c) #a⁺ ⊗ a⁺a⁻ ⊗ a⁻ + a⁻ ⊗ a⁺a⁻ ⊗ a⁺
+    interaction_ss_3 = rmul!(a_ppmm_3p(elt; cutoff=cutoff) +
+                         a_ppmm_3m(elt; cutoff=cutoff), 2^(2*r)*c) #a⁺a⁻a⁻ ⊗ a⁺ + a⁺a⁺a⁻ ⊗ a⁻
+    interaction_ss_3pm = rmul!(a_ppmm_3pm(elt; cutoff=cutoff), 2^(2*r)*c) #a⁺a⁻ ⊗ a⁺a⁻
+    interaction_ss_3ppmm = rmul!(a_ppmm_3ppmm(elt; cutoff=cutoff) +
+                            a_ppmm_3mmpp(elt; cutoff=cutoff), 2^(2*r)*c) #a⁺a⁺ ⊗ a⁻a⁻ + a⁻a⁻ ⊗ a⁺a⁺
+    interaction_ss_4 = rmul!(a_ppmm_4(elt; cutoff=cutoff), 2^(2*r)*c)
+    #the operators are built without symmetry, and then made symmetric under `symmetry`
+    ops = (chem_pot, kinetic, kinetic_ss, interaction, interaction_ss_2, interaction_ss_2pm, interaction_ss_3,
+           interaction_ss_3pm, interaction_ss_3ppmm, interaction_ss_4)
+    chem_pot, kinetic, kinetic_ss, interaction, interaction_ss_2, interaction_ss_2pm, interaction_ss_3,
+        interaction_ss_3pm, interaction_ss_3ppmm, interaction_ss_4 = map(o -> symmetric_operator(o, symmetry; cutoff=cutoff), ops)
 
     #building the Hamiltonian
     return @mpoham begin
@@ -255,21 +275,26 @@ function LL_D8(elt::Type{<:Number}=ComplexF64,
                         lattice::AbstractLattice=InfiniteChain(1);
                         μ=2.0, c=1.0, r=0.0, cutoff=2)
     #all terms in the Hamiltonian
-    chem_pot = rmul!(a_number(elt, symmetry; cutoff=cutoff), -(2^r)*μ)
-    kinetic =  rmul!(a_plusmin(elt, symmetry; cutoff=cutoff)+ a_minplus(elt, symmetry; cutoff=cutoff), 2^(3*r))
-    kinetic_ss = rmul!(a_number(elt, symmetry; cutoff=cutoff), 2^(3*r))
-    interaction = rmul!(a_ppmm(elt, symmetry; cutoff=cutoff) +
-                    a_mmpp(elt, symmetry; cutoff=cutoff), 2^(2*r)*c) #a⁺ ⊗ a⁺ ⊗ a⁻ ⊗ a⁻ + a⁻ ⊗ a⁻ ⊗ a⁺ ⊗ a⁺
-    interaction_ss_2 = rmul!(a_ppmm_2mm(elt, symmetry; cutoff=cutoff) + 
-                        a_ppmm_2pp(elt, symmetry; cutoff=cutoff), 2^(2*r)*c) #a⁺a⁺ ⊗ a⁻ ⊗ a⁻ + a⁻a⁻ ⊗ a⁺ ⊗ a⁺
-    interaction_ss_2pm = rmul!(a_ppmm_2pm(elt, symmetry; cutoff=cutoff) +
-                            a_ppmm_2mp(elt, symmetry; cutoff=cutoff), 2^(2*r)*c) #a⁺ ⊗ a⁺a⁻ ⊗ a⁻ + a⁻ ⊗ a⁺a⁻ ⊗ a⁺
-    interaction_ss_3 = rmul!(a_ppmm_3p(elt, symmetry; cutoff=cutoff) +
-                         a_ppmm_3m(elt, symmetry; cutoff=cutoff), 2^(2*r)*c) #a⁺a⁻a⁻ ⊗ a⁺ + a⁺a⁺a⁻ ⊗ a⁻
-    interaction_ss_3pm = rmul!(a_ppmm_3pm(elt, symmetry; cutoff=cutoff), 2^(2*r)*c) #a⁺a⁻ ⊗ a⁺a⁻
-    interaction_ss_3ppmm = rmul!(a_ppmm_3ppmm(elt, symmetry; cutoff=cutoff) +
-                            a_ppmm_3mmpp(elt, symmetry; cutoff=cutoff), 2^(2*r)*c) #a⁺a⁺ ⊗ a⁻a⁻ + a⁻a⁻ ⊗ a⁺a⁺
-    interaction_ss_4 = rmul!(a_ppmm_4(elt, symmetry; cutoff=cutoff), 2^(2*r)*c) 
+    chem_pot = rmul!(a_number(elt; cutoff=cutoff), -(2^r)*μ)
+    kinetic =  rmul!(a_plusmin(elt; cutoff=cutoff)+ a_minplus(elt; cutoff=cutoff), 2^(3*r))
+    kinetic_ss = rmul!(a_number(elt; cutoff=cutoff), 2^(3*r))
+    interaction = rmul!(a_ppmm(elt; cutoff=cutoff) +
+                    a_mmpp(elt; cutoff=cutoff), 2^(2*r)*c) #a⁺ ⊗ a⁺ ⊗ a⁻ ⊗ a⁻ + a⁻ ⊗ a⁻ ⊗ a⁺ ⊗ a⁺
+    interaction_ss_2 = rmul!(a_ppmm_2mm(elt; cutoff=cutoff) + 
+                        a_ppmm_2pp(elt; cutoff=cutoff), 2^(2*r)*c) #a⁺a⁺ ⊗ a⁻ ⊗ a⁻ + a⁻a⁻ ⊗ a⁺ ⊗ a⁺
+    interaction_ss_2pm = rmul!(a_ppmm_2pm(elt; cutoff=cutoff) +
+                            a_ppmm_2mp(elt; cutoff=cutoff), 2^(2*r)*c) #a⁺ ⊗ a⁺a⁻ ⊗ a⁻ + a⁻ ⊗ a⁺a⁻ ⊗ a⁺
+    interaction_ss_3 = rmul!(a_ppmm_3p(elt; cutoff=cutoff) +
+                         a_ppmm_3m(elt; cutoff=cutoff), 2^(2*r)*c) #a⁺a⁻a⁻ ⊗ a⁺ + a⁺a⁺a⁻ ⊗ a⁻
+    interaction_ss_3pm = rmul!(a_ppmm_3pm(elt; cutoff=cutoff), 2^(2*r)*c) #a⁺a⁻ ⊗ a⁺a⁻
+    interaction_ss_3ppmm = rmul!(a_ppmm_3ppmm(elt; cutoff=cutoff) +
+                            a_ppmm_3mmpp(elt; cutoff=cutoff), 2^(2*r)*c) #a⁺a⁺ ⊗ a⁻a⁻ + a⁻a⁻ ⊗ a⁺a⁺
+    interaction_ss_4 = rmul!(a_ppmm_4(elt; cutoff=cutoff), 2^(2*r)*c)
+    #the operators are built without symmetry, and then made symmetric under `symmetry`
+    ops = (chem_pot, kinetic, kinetic_ss, interaction, interaction_ss_2, interaction_ss_2pm, interaction_ss_3,
+           interaction_ss_3pm, interaction_ss_3ppmm, interaction_ss_4)
+    chem_pot, kinetic, kinetic_ss, interaction, interaction_ss_2, interaction_ss_2pm, interaction_ss_3,
+        interaction_ss_3pm, interaction_ss_3ppmm, interaction_ss_4 = map(o -> symmetric_operator(o, symmetry; cutoff=cutoff), ops)
 
     #building the Hamiltonian
     return @mpoham begin 
@@ -362,6 +387,8 @@ function quad_model(elt::Type{<:Number}=ComplexF64,
                             symmetry::Type{<:Sector}=Trivial,
                             lattice::AbstractLattice=InfiniteChain(1);
                             μ=1.0, λ=1.0, r=0.0, cutoff=2)
+    #a⁺a⁺ + aa does not conserve the particle number
+    symmetry === Trivial || throw(ArgumentError("only Trivial symmetry is implemented, got $symmetry"))
     #all terms in the Hamiltonian
     attraction = rmul!(a_number(elt, symmetry; cutoff=cutoff), (2^r)*μ)
     interaction = rmul!(a_pp(elt, symmetry; cutoff=cutoff)+a_mm(elt, symmetry; cutoff=cutoff), (2^r)*λ)
@@ -413,6 +440,8 @@ function quad_model_D8(elt::Type{<:Number}=ComplexF64,
                             symmetry::Type{<:Sector}=Trivial,
                             lattice::AbstractLattice=InfiniteChain(1);
                             μ=1.0, λ=1.0, r=0.0, cutoff=2)
+    #a⁺a⁺ + aa does not conserve the particle number
+    symmetry === Trivial || throw(ArgumentError("only Trivial symmetry is implemented, got $symmetry"))
     #all terms in the Hamiltonian
     attraction = rmul!(a_number(elt, symmetry; cutoff=cutoff), (2^r)*μ)
     interaction = rmul!(a_pp(elt, symmetry; cutoff=cutoff)+a_mm(elt, symmetry; cutoff=cutoff), (2^r)*λ)
@@ -488,6 +517,13 @@ end
 # different grades, which costs both the nilpotency of A and, because the singular values of
 # 𝓗 span twelve orders of magnitude, roughly eight digits of accuracy.  Not worth 45 → 36.
 #
+# U(1) symmetry: every term conserves the particle number, so a prefix u that changes it by q
+# can only be completed by suffixes that change it by -q.  The rows of a grade therefore split
+# into charge sectors with disjoint supports, and taking one SVD per (grade, charge) instead of
+# one per grade spans the same space, with the same number of states, but now every state has
+# a definite charge.  That is exactly what a U(1) symmetric MPO needs: the state is a virtual
+# level carrying that charge.
+#
 # The construction is generic: `exact_mpo_hamiltonian` takes any finite range term list.
 # `LL_D6_minimal` / `LL_D8_minimal` feed it the wavelet Lieb-Liniger terms and are drop-in
 # replacements for `LL_D6` / `LL_D8`.
@@ -539,7 +575,7 @@ end
 ################################################################################################
 
 """
-    exact_mpo_data(coeffs, nops, R; rtol=1e-13, verbose=false)
+    exact_mpo_data(coeffs, nops, R; charges=zeros(Int, nops), rtol=1e-13, verbose=false)
 
 Turn the window term list `coeffs` into the blocks `(A, B, C, D)` of a Jordan form MPO.
 
@@ -553,17 +589,22 @@ term already spans) and, within a grade, are an orthonormal basis of the span of
 
     row(u)[v] = coeffs[u·v],   |u| = ℓ,
 
-obtained from a single SVD.  Prefixes of the same grade are strongly linearly dependent and
+obtained from one SVD per charge sector.  `charges[o]` is the change in particle number of the
+alphabet operator `o`; every term must conserve it, and the states then have a definite charge
+(see the comment above).  With the default, all charges zero, there is one SVD per grade.
+Prefixes of the same grade are strongly linearly dependent and
 only the dependent directions are dropped: `rtol` is the relative singular value below which a
 direction counts as exactly zero.  It has to separate round-off (~1e-16) from the smallest
 genuine direction; the gap is several orders wide here, and a warning is raised if it is not.
 
 Returns a named tuple with `A[o, α, β]`, `B[o, α]`, `C[o, α]`, `D[o]` the coefficient of the
-alphabet operator `o` in the corresponding block, `grades[α]` the grade of internal state `α`,
-and `residual`, the largest error on any term of `H` (see [`mpo_data_residual`](@ref)).
+alphabet operator `o` in the corresponding block, `grades[α]` and `statecharges[α]` the grade
+and the charge of internal state `α`, and `residual`, the largest error on any term of `H` (see [`mpo_data_residual`](@ref)).
 """
 function exact_mpo_data(coeffs::Dict{Vector{Int}, T}, nops::Integer, R::Integer;
+                        charges::AbstractVector{<:Integer} = zeros(Int, nops),
                         rtol::Real = 1.0e-13, verbose::Bool = false) where {T <: Real}
+    charge(u) = sum(charges[o] for o in u; init = 0)
     # ---- split off the purely on-site terms -------------------------------------------------
     D = zeros(T, nops)
     multi = Vector{Int}[]
@@ -571,6 +612,7 @@ function exact_mpo_data(coeffs::Dict{Vector{Int}, T}, nops::Integer, R::Integer;
         iszero(γ) && continue
         @assert length(s) == R + 1 "window strings must have length R+1 = $(R + 1)"
         @assert s[1] != 1 "terms must be anchored on their leftmost site"
+        @assert charge(s) == 0 "terms must conserve the particle number"
         if all(==(1), @view s[2:end])
             D[s[1]] += γ
         else
@@ -611,22 +653,32 @@ function exact_mpo_data(coeffs::Dict{Vector{Int}, T}, nops::Integer, R::Integer;
         𝓗[iu, iv] += γ
     end
 
-    # ---- one orthonormal basis per grade ----------------------------------------------------
+    # ---- one orthonormal basis per grade, made of one basis per charge sector ----------------
+    # rows of different charges have disjoint supports, so the stacked bases are orthonormal.
+    # The SVD leaves round-off (~1e-16) outside the support of a sector, which is set to zero, so
+    # that A, B and C exactly respect the charges
+    colcharges = charge.(colkeys)
     rowsof = [findall(u -> length(u) == ℓ, rowkeys) for ℓ in 1:R]
     E = Vector{Matrix{T}}(undef, R)                 # E[ℓ] = n_ℓ × ncol, orthonormal rows
+    Q = Vector{Vector{Int}}(undef, R)               # Q[ℓ][α] = charge of state α of grade ℓ
     kept = fill(zero(T), R)                         # σ_n / σ_1, per grade
     dropped = fill(zero(T), R)                      # σ_{n+1} / σ_1, per grade
     for ℓ in 1:R
-        F = svd(𝓗[rowsof[ℓ], :])
-        n = count(>(rtol * F.S[1]), F.S)
-        E[ℓ] = F.Vt[1:n, :]
-        kept[ℓ] = F.S[n] / F.S[1]
-        dropped[ℓ] = n < length(F.S) ? F.S[n + 1] / F.S[1] : zero(T)
+        q = charge.(rowkeys[rowsof[ℓ]])
+        sectors = sort(unique(q))
+        Fs = [svd(𝓗[rowsof[ℓ][q .== qs], :]) for qs in sectors]
+        σ1 = maximum(F.S[1] for F in Fs)            # the largest singular value of the grade
+        ns = [count(>(rtol * σ1), F.S) for F in Fs]
+        E[ℓ] = reduce(vcat, [F.Vt[1:n, :] .* (colcharges .== -qs)' for (F, n, qs) in zip(Fs, ns, sectors)])
+        Q[ℓ] = reduce(vcat, [fill(qs, n) for (qs, n) in zip(sectors, ns)])
+        kept[ℓ] = minimum(F.S[n] for (F, n) in zip(Fs, ns) if n > 0) / σ1
+        dropped[ℓ] = maximum(n < length(F.S) ? F.S[n + 1] : zero(T) for (F, n) in zip(Fs, ns)) / σ1
     end
     nstates = size.(E, 1)
     off = cumsum([0; nstates])                      # state α of grade ℓ ↦ off[ℓ] + α
     r = last(off)
     grades = reduce(vcat, [fill(ℓ, nstates[ℓ]) for ℓ in 1:R]; init = Int[])
+    statecharges = reduce(vcat, Q; init = Int[])
 
     # the directions that were dropped have to be zero to machine precision, otherwise `rtol`
     # is throwing away a real piece of the Hamiltonian rather than a linear dependency
@@ -669,7 +721,7 @@ function exact_mpo_data(coeffs::Dict{Vector{Int}, T}, nops::Integer, R::Integer;
         @info "exact MPO" range = R terms = length(coeffs) bond_dimension = r + 2 prefixes_per_grade = length.(rowsof) states_per_grade = nstates smallest_kept = minimum(kept) largest_discarded = maximum(dropped) residual
     end
 
-    return (; A, B, C, D, grades, residual, nstates, kept, dropped)
+    return (; A, B, C, D, grades, statecharges, residual, nstates, kept, dropped)
 end
 
 """
@@ -732,19 +784,24 @@ function mpo_data_residual(A, B, C, D, coeffs::Dict{Vector{Int}, T}, R::Integer,
 end
 
 """
-    exact_mpo_hamiltonian(coeffs, ops, R, lattice; elt=ComplexF64, rtol=1e-13, verbose=false)
+    exact_mpo_hamiltonian(coeffs, ops, R, lattice; elt=ComplexF64, symmetry=Trivial,
+                          rtol=1e-13, verbose=false)
 
 Assemble the `MPOHamiltonian` of the finite range, translation invariant Hamiltonian described
-by the window term list `coeffs` over the operator alphabet `ops` (a vector of matrices whose
-first entry is the identity).  Works on `InfiniteChain(1)` and on a `FiniteChain`, where the
-automaton is simply entered at the first site and left at the last one, so that exactly the
-terms fitting inside the chain survive.
+by the window term list `coeffs` over the operator alphabet `ops` (a vector of matrices in the
+Fock basis, whose first entry is the identity).  Works on `InfiniteChain(1)` and on a
+`FiniteChain`, where the automaton is simply entered at the first site and left at the last one,
+so that exactly the terms fitting inside the chain survive.  With `symmetry = U1Irrep`, every
+operator of the alphabet must change the particle number by a definite amount, and every term
+must conserve it.
 """
 function exact_mpo_hamiltonian(coeffs::Dict{Vector{Int}, T}, ops::Vector{<:Matrix},
                                R::Integer, lattice::AbstractLattice;
-                               elt::Type{<:Number} = ComplexF64, rtol::Real = 1.0e-13,
+                               elt::Type{<:Number} = ComplexF64,
+                               symmetry::Type{<:Sector} = Trivial, rtol::Real = 1.0e-13,
                                verbose::Bool = false) where {T <: Real}
-    W = exact_mpo_matrix(coeffs, ops, R; elt = elt, rtol = rtol, verbose = verbose)
+    W = exact_mpo_matrix(coeffs, ops, R; elt = elt, symmetry = symmetry, rtol = rtol,
+                         verbose = verbose)
 
     if lattice isa InfiniteChain
         length(lattice) == 1 ||
@@ -753,39 +810,82 @@ function exact_mpo_hamiltonian(coeffs::Dict{Vector{Int}, T}, ops::Vector{<:Matri
     elseif lattice isa FiniteChain
         L = length(lattice)
         L > R || throw(ArgumentError("chain of length $L is shorter than the range $R"))
-        return FiniteMPOHamiltonian([i == 1 ? W[1:1, :] : i == L ? W[:, end:end] : W
-                                     for i in 1:L])
+        return finite_mpo_hamiltonian(fill(W, L))
     else
         throw(ArgumentError("unsupported lattice $lattice"))
     end
 end
 
-#an on-site operator, given as a matrix, as an entry of an MPO matrix
-function mpo_entry(mat::AbstractMatrix, elt::Type{<:Number})
+"""
+    finite_mpo_hamiltonian(Ws)
+
+`FiniteMPOHamiltonian` from the Jordan form MPO matrices `Ws[i]` of every site, keeping only the
+first row at the first site and the last column at the last one.  The rows of levels that cannot
+be reached from the left end of the chain, i.e. terms that would have started before the first
+site, are dropped: they never contribute, and MPSKit, which deduces the space of a level from
+the entries leading to it, would give them a trivial space, inconsistent with the charge of the
+entries leaving them.
+"""
+function finite_mpo_hamiltonian(Ws::AbstractVector{<:AbstractMatrix})
+    L = length(Ws)
+    Ws = [i == 1 ? W[1:1, :] : i == L ? W[:, end:end] : copy(W) for (i, W) in enumerate(Ws)]
+    reached = trues(1)
+    for W in Ws
+        W[.!reached, :] .= missing
+        reached = [any(!ismissing, @view W[:, j]) for j in axes(W, 2)]
+    end
+    return FiniteMPOHamiltonian(Ws)
+end
+
+#the change in particle number of an on-site operator, given as a matrix in the Fock basis
+function operator_charge(mat::AbstractMatrix)
+    Δ = unique(i - j for (i, j) in Tuple.(findall(!iszero, mat)))
+    length(Δ) <= 1 ||
+        throw(ArgumentError("the operator does not change the particle number by a definite amount"))
+    return isempty(Δ) ? 0 : only(Δ)
+end
+
+#an on-site operator, given as a matrix in the Fock basis, as an entry of an MPO matrix, between
+#virtual levels of charges qin and qout (only used with U(1) symmetry)
+function mpo_entry(mat::AbstractMatrix, elt::Type{<:Number}, ::Type{Trivial} = Trivial,
+                   qin::Integer = 0, qout::Integer = 0)
     pspace = ComplexSpace(size(mat, 1))
     return MPSKit.add_util_leg(TensorMap(convert(Matrix{elt}, mat), pspace ← pspace))
 end
+function mpo_entry(mat::AbstractMatrix, elt::Type{<:Number}, ::Type{U1Irrep}, qin::Integer,
+                   qout::Integer)
+    d = size(mat, 1)
+    pspace = U1Space(n => 1 for n in 0:(d - 1))
+    #TensorMap checks that the operator changes the charge by qout - qin
+    return TensorMap(reshape(convert(Matrix{elt}, mat), 1, d, d, 1),
+                     U1Space(qin => 1) ⊗ pspace ← pspace ⊗ U1Space(qout => 1))
+end
+mpo_entry(mat::AbstractMatrix, elt::Type{<:Number}, symmetry::Type{<:Sector}, args...) =
+    throw(ArgumentError("only Trivial and U1Irrep symmetries are implemented, got $symmetry"))
 
 """
-    exact_mpo_matrix(coeffs, ops, R; elt=ComplexF64, rtol=1e-13, verbose=false)
+    exact_mpo_matrix(coeffs, ops, R; elt=ComplexF64, symmetry=Trivial, rtol=1e-13, verbose=false)
 
 The Jordan form MPO matrix `W` built by [`exact_mpo_hamiltonian`](@ref), whose entries are
 `missing`, numbers (multiples of the identity) or MPO tensors.  The first and last virtual
-levels are the "not started" and "done" states.
+levels are the "not started" and "done" states, both of charge 0.
 """
 function exact_mpo_matrix(coeffs::Dict{Vector{Int}, T}, ops::Vector{<:Matrix}, R::Integer;
-                          elt::Type{<:Number} = ComplexF64, rtol::Real = 1.0e-13,
-                          verbose::Bool = false) where {T <: Real}
+                          elt::Type{<:Number} = ComplexF64, symmetry::Type{<:Sector} = Trivial,
+                          rtol::Real = 1.0e-13, verbose::Bool = false) where {T <: Real}
     nops = length(ops)
-    (; A, B, C, D, grades) = exact_mpo_data(coeffs, nops, R; rtol = rtol, verbose = verbose)
+    charges = symmetry === Trivial ? zeros(Int, nops) : operator_charge.(ops)
+    (; A, B, C, D, grades, statecharges) = exact_mpo_data(coeffs, nops, R; charges = charges,
+                                                          rtol = rtol, verbose = verbose)
     r = length(grades)
+    q = [0; statecharges; 0]                        # charges of all levels
 
     d = size(first(ops), 1)
-    TO = typeof(mpo_entry(zeros(elt, d, d), elt))
+    TO = typeof(mpo_entry(zeros(elt, d, d), elt, symmetry, 0, 0))
 
     # γ ↦ MPO matrix entry: `missing` when it vanishes, a number when it is a multiple of the
     # identity (MPSKit then stores a BraidingTensor rather than a dense tensor), a tensor else
-    function entry(γ::AbstractVector)
+    function entry(γ::AbstractVector, qin, qout)
         iszero(norm(γ)) && return missing
         if iszero(norm(@view γ[2:end]))
             return convert(elt, γ[1])
@@ -794,18 +894,18 @@ function exact_mpo_matrix(coeffs::Dict{Vector{Int}, T}, ops::Vector{<:Matrix}, R
         for o in 1:nops
             iszero(γ[o]) || axpy!(γ[o], ops[o], mat)
         end
-        return mpo_entry(mat, elt)
+        return mpo_entry(mat, elt, symmetry, qin, qout)
     end
 
     W = Matrix{Union{Missing, elt, TO}}(missing, r + 2, r + 2)
     W[1, 1] = one(elt)
     W[end, end] = one(elt)
-    W[1, end] = entry(D)
+    W[1, end] = entry(D, 0, 0)
     for α in 1:r
-        W[1, 1 + α] = entry(@view C[:, α])
-        W[1 + α, end] = entry(@view B[:, α])
+        W[1, 1 + α] = entry((@view C[:, α]), 0, q[1 + α])
+        W[1 + α, end] = entry((@view B[:, α]), q[1 + α], 0)
         for β in 1:r
-            W[1 + α, 1 + β] = entry(@view A[:, α, β])
+            W[1 + α, 1 + β] = entry((@view A[:, α, β]), q[1 + α], q[1 + β])
         end
     end
     @assert all(ismissing, W[i, j] for i in 1:(r + 2), j in 1:(r + 2) if j < i) "the MPO must \
@@ -917,7 +1017,9 @@ where ψₙʳ (ψₙʳ⁺) is a bosonic annihilation
 resolution.
 
 By default, the model is defined on an infinite chain with unit lattice spacing, without any
-symmetries and with `ComplexF64` entries of the tensors.
+symmetries and with `ComplexF64` entries of the tensors.  The Hamiltonian conserves the particle number, and can also be built with `symmetry = U1Irrep`;
+the physical space is then `U1Space(n => 1 for n in 0:cutoff)`, and a finite chain ground state
+can be searched for directly in the sector with N particles.
 """
 
 """
@@ -984,13 +1086,13 @@ function LL_wavelet_minimal(K::AbstractVector, Γ4::AbstractArray{<:Real, 3},
                           lattice::AbstractLattice = InfiniteChain(1);
                           μ = 2.0, c = 1.0, r = 0.0, cutoff = 2, rtol::Real = 1.0e-13,
                           verbose::Bool = false)
-    symmetry === Trivial ||
-        throw(ArgumentError("only Trivial symmetry is implemented, got $symmetry"))
+    symmetry in (Trivial, U1Irrep) ||
+        throw(ArgumentError("only Trivial and U1Irrep symmetries are implemented, got $symmetry"))
     # at most two creation and two annihilation operators of a quartic term meet on one site
     _, ops, index = boson_alphabet(elt, cutoff, 2, 2)
     coeffs, R = LL_terms(K, Γ4, index; μ = μ, c = c, r = r)
-    return exact_mpo_hamiltonian(coeffs, ops, R, lattice; elt = elt, rtol = rtol,
-                                 verbose = verbose)
+    return exact_mpo_hamiltonian(coeffs, ops, R, lattice; elt = elt, symmetry = symmetry,
+                                 rtol = rtol, verbose = verbose)
 end
 
 ################################################################################################
@@ -1069,8 +1171,9 @@ as a sum of local operators (one per term, as in `@mpoham`).
 function harmonic_trap(V::AbstractMatrix, elt::Type{<:Number}, symmetry::Type{<:Sector},
                        lattice::FiniteChain; cutoff=2)
     w = length(h6) - 2
-    number = a_number(elt, symmetry; cutoff=cutoff)
-    hopping = a_plusmin(elt, symmetry; cutoff=cutoff) + a_minplus(elt, symmetry; cutoff=cutoff) #a⁺ ⊗ a⁻ + a⁻ ⊗ a⁺
+    number = symmetric_operator(a_number(elt; cutoff=cutoff), symmetry; cutoff=cutoff)
+    hopping = symmetric_operator(a_plusmin(elt; cutoff=cutoff) + a_minplus(elt; cutoff=cutoff), symmetry;
+                                 cutoff=cutoff) #a⁺ ⊗ a⁻ + a⁻ ⊗ a⁺
     site(i) = i.coordinates[1]
     terms = sum(vertices(lattice)) do i
         return V[site(i), site(i)]*MPSKitModels.LocalOperator(number, i)
@@ -1084,18 +1187,20 @@ function harmonic_trap(V::AbstractMatrix, elt::Type{<:Number}, symmetry::Type{<:
 end
 
 """
-    onebody_mpo_hamiltonian(W, V, cre, ann, num)
+    onebody_mpo_hamiltonian(W, V, entry)
 
 Finite chain MPO of `H_W + Σₙₘ Vₙₘ a⁺ₙ aₘ`, where `H_W` is the translation invariant Hamiltonian
 with Jordan form MPO matrix `W` (see [`exact_mpo_matrix`](@ref)) and `V` is a symmetric, banded
-matrix with `Vₙₘ = 0` for `|n - m| > w`.  `cre`, `ann`, `num` are the MPO entries of a⁺, a and a⁺a.
+matrix with `Vₙₘ = 0` for `|n - m| > w`.  `entry((p, q), qin, qout)` is the MPO entry of
+`(a⁺)ᵖ aᑫ` between virtual levels of charges `qin` and `qout`.
 
 The one-body term gets 2w virtual levels of its own: "a⁺ was emitted d sites ago" and "a was
 emitted d sites ago", for d = 1, …, w.  They are opened with a⁺ or a, carried along with the
 identity, and closed at site m with V[m-d, m] a or V[m-d, m] a⁺; the diagonal goes into the on-site
-block.  Nothing is compressed, so the bond dimension is that of `W` plus 2w.
+block.  Nothing is compressed, so the bond dimension is that of `W` plus 2w.  The new levels have
+charge +1 (after a⁺) and -1 (after a).
 """
-function onebody_mpo_hamiltonian(W::AbstractMatrix, V::AbstractMatrix, cre, ann, num)
+function onebody_mpo_hamiltonian(W::AbstractMatrix, V::AbstractMatrix, entry)
     L = size(V, 1)
     w = maximum(abs(i - j) for i in 1:L, j in 1:L if !iszero(V[i, j]); init = 0)
     nW = size(W, 1)                        # 1 = not started, nW = done
@@ -1103,6 +1208,7 @@ function onebody_mpo_hamiltonian(W::AbstractMatrix, V::AbstractMatrix, cre, ann,
     P(d) = nW - 1 + d                      # a⁺ was emitted d sites ago
     Q(d) = nW - 1 + w + d                  # a was emitted d sites ago
     id = W[1, 1]                           # the identity, stored as a number
+    num = entry((1, 1), 0, 0)
 
     Ws = map(1:L) do m
         Wm = similar(W, n, n)
@@ -1114,21 +1220,21 @@ function onebody_mpo_hamiltonian(W::AbstractMatrix, V::AbstractMatrix, cre, ann,
         # exact_mpo_data rejects terms that start with the identity
         D = W[1, nW]
         Wm[1, n] = ismissing(D) ? V[m, m] * num : D + V[m, m] * num
-        Wm[1, P(1)] = cre
-        Wm[1, Q(1)] = ann
+        Wm[1, P(1)] = entry((1, 0), 0, 1)
+        Wm[1, Q(1)] = entry((0, 1), 0, -1)
         for d in 1:w
             if d < w
                 Wm[P(d), P(d + 1)] = id
                 Wm[Q(d), Q(d + 1)] = id
             end
             if m - d >= 1
-                Wm[P(d), n] = V[m - d, m] * ann
-                Wm[Q(d), n] = V[m - d, m] * cre
+                Wm[P(d), n] = V[m - d, m] * entry((0, 1), 1, 0)
+                Wm[Q(d), n] = V[m - d, m] * entry((1, 0), -1, 0)
             end
         end
         return Wm
     end
-    return FiniteMPOHamiltonian([m == 1 ? Ws[m][1:1, :] : m == L ? Ws[m][:, end:end] : Ws[m] for m in 1:L])
+    return finite_mpo_hamiltonian(Ws)
 end
 
 const LL_TRAP_DOC = """
@@ -1145,7 +1251,9 @@ n = i - 1, and by default the trap is centred on the chain (`x0 = nothing`).
 `LL_D6_trap` adds the trap terms to those of `LL_D6`, one by one, before building the MPO, and
 `LL_D6_trap_minimal` adds them to the MPO of `LL_D6_minimal` with 8 extra virtual levels (see
 [`onebody_mpo_hamiltonian`](@ref)).  They are the same operator, and
-`exact_model(LL_D6_trap_minimal) === LL_D6_trap`.  The lattice must be a `FiniteChain`.
+`exact_model(LL_D6_trap_minimal) === LL_D6_trap`.  The lattice must be a `FiniteChain`.  The Hamiltonian conserves the particle number, and can also be built with `symmetry = U1Irrep`;
+the physical space is then `U1Space(n => 1 for n in 0:cutoff)`, and a finite chain ground state
+can be searched for directly in the sector with N particles.
 """
 
 """
@@ -1194,16 +1302,17 @@ function LL_D6_trap_minimal(elt::Type{<:Number}, symmetry::Type{<:Sector}, latti
                             μ=2.0, c=1.0, r=0.0, cutoff=2, ω=1.0, x0=nothing, rtol::Real=1.0e-13,
                             verbose::Bool=false)
     check_trap_lattice(lattice)
-    symmetry === Trivial ||
-        throw(ArgumentError("only Trivial symmetry is implemented, got $symmetry"))
+    symmetry in (Trivial, U1Irrep) ||
+        throw(ArgumentError("only Trivial and U1Irrep symmetries are implemented, got $symmetry"))
     _, ops, index = boson_alphabet(elt, cutoff, 2, 2)
     coeffs, R = LL_terms(K6, Γ4_D6, index; μ = μ, c = c, r = r)
     L = length(lattice)
     L > R || throw(ArgumentError("chain of length $L is shorter than the range $R"))
-    W = exact_mpo_matrix(coeffs, ops, R; elt = elt, rtol = rtol, verbose = verbose)
+    W = exact_mpo_matrix(coeffs, ops, R; elt = elt, symmetry = symmetry, rtol = rtol,
+                         verbose = verbose)
     V = rmul!(trap_matrix(L; ω, x0, r), 2^r)
-    cre, ann, num = (mpo_entry(ops[index[pq]], elt) for pq in ((1, 0), (0, 1), (1, 1)))
-    return onebody_mpo_hamiltonian(W, V, cre, ann, num)
+    entry(pq, qin, qout) = mpo_entry(ops[index[pq]], elt, symmetry, qin, qout)
+    return onebody_mpo_hamiltonian(W, V, entry)
 end
 
 """
