@@ -1,4 +1,4 @@
-#the Lieb-Liniger model in a harmonic trap, LL_D6_trap and LL_D6_trap_minimal
+#the Lieb-Liniger model in a harmonic trap, LL_D6_trap and LL_D6_trap_minimal, and in a Gaussian well
 
 @testset "scaling function moments" begin
     h = wMPS.h6
@@ -62,4 +62,66 @@ end
     E = expectation_value(ψ, LL_D6_trap(FiniteChain(10); kw...))
     @test isreal_energy(E)
     @test expectation_value(ψ, LL_D6_trap_minimal(FiniteChain(10); kw...)) ≈ E rtol = 1e-12
+end
+
+#the Gaussian well V(x) = -V₀ exp(-(x - x₀)²/2w²), LL_D6_gaussian and LL_D6_gaussian_minimal
+
+@testset "Gaussian well matrix" begin
+    L, r, V0, w, x0 = 30, 1, 2.0, 1.3, 7.0
+    V = wMPS.gaussian_matrix(L; V0, w, x0, r)
+    @test V ≈ V' atol = 1e-14
+    @test all(iszero(V[i, j]) for i in 1:L, j in 1:L if abs(i - j) > 4)
+    #against a quadrature with the scaling function on a fine dyadic grid
+    J = 10
+    s = wMPS.scaling_function(wMPS.h6, J)
+    Vq = zeros(L, L)
+    for n in 0:(L - 1), m in max(0, n - 4):min(L - 1, n + 4), t in (max(n, m) * 2^J):((min(n, m) + 5) * 2^J)
+        Vq[n + 1, m + 1] += -V0 * exp(-(t / 2^(J + r) - x0)^2 / 2w^2) * s[t - n * 2^J + 1] * s[t - m * 2^J + 1] / 2^J
+    end
+    @test V ≈ Vq atol = 1e-7
+    #a wide well is -V₀ plus a harmonic trap with ω² = V₀/w², up to (x - x₀)⁴/w⁴
+    W = 1000.0
+    @test wMPS.gaussian_matrix(L; V0, w=W, x0, r) ≈ -V0 * I + wMPS.trap_matrix(L; ω=sqrt(V0) / W, x0, r) atol = 1e-8
+    #one particle in the well, -∂ₓ² + V(x), against finite differences
+    r, l, V0, w = 4, 16.0, 5.0, 1.0
+    L = round(Int, l * 2^r)
+    K = zeros(L, L)
+    for n in 1:L, s in 0:4
+        n + s <= L && (K[n, n + s] = K[n + s, n] = wMPS.K6[1 + s])
+    end
+    E = eigvals(Symmetric(2^(2r) .* K .+ wMPS.gaussian_matrix(L; V0, w, r)))
+    xc = ((L - 1) / 2 + wMPS.scaling_moments(wMPS.h6, 1)[2, 5]) / 2^r    #the default centre
+    xs = range(0, l, length=4002)[2:(end - 1)]
+    Efd = eigvals(SymTridiagonal(2 / step(xs)^2 .- V0 .* exp.(-(xs .- xc) .^ 2 ./ 2w^2), fill(-1 / step(xs)^2, length(xs) - 1)))
+    @test E[1:2] ≈ Efd[1:2] rtol = 1e-4
+end
+
+@testset "LL_D6_gaussian" begin
+    L, d, r, V0, w, x0 = 6, 3, 1, 1.5, 0.6, 1.2
+    kw = (; μ=1.0, c=3.0, r, cutoff=d - 1, V0, w, x0)
+    @test exact_model(LL_D6_gaussian_minimal) === LL_D6_gaussian
+    @test_throws ArgumentError LL_D6_gaussian(InfiniteChain(1); kw...)
+    @test_throws ArgumentError LL_D6_gaussian_minimal(InfiniteChain(1); kw...)
+    @test_throws ArgumentError LL_D6_gaussian_minimal(FiniteChain(4); kw...)    #shorter than the range
+
+    He = LL_D6_gaussian(FiniteChain(L); kw...)
+    Hm = LL_D6_gaussian_minimal(FiniteChain(L); kw...)
+    @test maximum(dim(left_virtualspace(Hm, i)) for i in 1:L) <= 45 + 8
+
+    #the well adds exactly Σₙₘ 2ʳ Vₙₘ a⁺ₙ aₘ (see the LL_D6_trap testset)
+    dense(H) = reshape(convert(TensorMap, H).data, d^L, d^L)
+    a = diagm(1 => sqrt.(1:(d - 1)))
+    op(o, n) = foldl(kron, [L + 1 - j == n ? o : Matrix(1.0I, d, d) for j in 1:L])
+    V = wMPS.gaussian_matrix(L; V0, w, x0, r)
+    well = sum(2^r * V[n, m] * op(a', n) * op(a, m) for n in 1:L, m in 1:L)
+    H0 = dense(LL_D6(FiniteChain(L); μ=1.0, c=3.0, r, cutoff=d - 1))
+    @test dense(He) - H0 ≈ well atol = 1e-10
+    @test dense(Hm) ≈ dense(He) atol = 1e-10
+
+    #with U(1) symmetry
+    @test LL_D6_gaussian_minimal(U1Irrep, FiniteChain(10); kw...) isa FiniteMPOHamiltonian
+    ψ = FiniteMPS(rand, ComplexF64, 10, ℂ^d, ℂ^4)
+    E = expectation_value(ψ, LL_D6_gaussian(FiniteChain(10); kw...))
+    @test isreal_energy(E)
+    @test expectation_value(ψ, LL_D6_gaussian_minimal(FiniteChain(10); kw...)) ≈ E rtol = 1e-12
 end

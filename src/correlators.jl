@@ -33,13 +33,14 @@ function scaling_function(h::AbstractVector, J::Integer)
     return s
 end
 
-#a⁺ ⊗ a and n on the physical space of ψ, with its symmetry
+#a⁺ ⊗ a and n on the physical space of ψ, with its symmetry. Its basis must be the Fock basis, in
+#the same order, as for U1Space(n => 1 for n in 0:cutoff), or U1Space(q n - p => 1 for n in 0:cutoff)
+#for a state at filling p/q (see examples/dynamics.jl); TensorMap checks the symmetry
 function onebody_operators(ψ)
     P = physicalspace(ψ, 1)
     cutoff = state_cutoff(ψ)
-    hopping = symmetric_operator(a_plus(; cutoff) ⊗ a_min(; cutoff), sectortype(P); cutoff)
-    number = symmetric_operator(a_number(; cutoff), sectortype(P); cutoff)
-    return hopping, number
+    op(o) = TensorMap(convert(Array, o), P^numout(o) ← P^numin(o))
+    return op(a_plus(; cutoff) ⊗ a_min(; cutoff)), op(a_number(; cutoff))
 end
 
 ################################################################################################
@@ -96,8 +97,11 @@ the points x = t / 2^(r+J), from 0 to the end of the last mode at (L + 4) / 2^r.
 correlations are computed, and s(x) is computed exactly on the grid with [`scaling_function`](@ref).
 Works with `Trivial` and `U1Irrep` states. For an `InfiniteMPS`, `continuum_density(ψ, r, xmax)` gives
 the one-body density matrix ⟨ψ⁺(x)ψ(0)⟩ instead.
+
+ψ can also be a `WindowMPS`, whose window site n + 1 holds the mode sₙ(x); the modes outside the
+window are then left out, so that ρ(x) is only exact for 5/2^r ≤ x ≤ (L - 1)/2^r.
 """
-function continuum_density(ψ::FiniteMPS, r::Integer; J::Integer=5)
+function continuum_density(ψ::Union{FiniteMPS, WindowMPS}, r::Integer; J::Integer=5)
     hopping, number = onebody_operators(ψ)
     L = length(ψ)
     w = length(h6) - 1

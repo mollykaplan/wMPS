@@ -6,7 +6,7 @@ A wavelet MPS (wMPS) is a matrix product state whose sites are the modes of a su
 
 The package includes:
 
-- MPO Hamiltonians for the Lieb-Liniger model in the Daubechies D6 and D8 wavelet bases (`LL_D6`, `LL_D8`), exact minimal-bond-dimension versions of these (`LL_D6_minimal`, `LL_D8_minimal`, `LL_wavelet_minimal`), the D6 model in a harmonic trap V(x) = ½ω²(x - x₀)² on a finite chain (`LL_D6_trap`, `LL_D6_trap_minimal`), and a quadratic test model (`quad_model`, `quad_model_D8`)
+- MPO Hamiltonians for the Lieb-Liniger model in the Daubechies D6 and D8 wavelet bases (`LL_D6`, `LL_D8`), exact minimal-bond-dimension versions of these (`LL_D6_minimal`, `LL_D8_minimal`, `LL_wavelet_minimal`), the D6 model on a finite chain in a harmonic trap V(x) = ½ω²(x - x₀)² (`LL_D6_trap`, `LL_D6_trap_minimal`) or in a Gaussian well V(x) = -V₀ exp(-(x - x₀)²/2w²) (`LL_D6_gaussian`, `LL_D6_gaussian_minimal`), and a quadratic test model (`quad_model`, `quad_model_D8`)
 - MPS refinement from one resolution to the next (`MPSrefine`, `single_site`, `refinement_alg`, `refine_optim`), and its finite chain version (`MPSrefine_finite`)
 - Correlation functions: the one-body density matrix ⟨ψ⁺(x)ψ(0)⟩ of an infinite state and the density of a finite chain state (`continuum_density`), and the density-density correlation function ⟨ψ⁺(x)ψ⁺(0)ψ(x)ψ(0)⟩ of an infinite state (`nn_correlator`)
 - Ground states at fixed particle number on a finite chain, refined from one resolution to the next (`finite_groundstates`), and the Tonks-Girardeau limit to compare them with (`box_levels`, `tg_box_density`, `trap_levels`, `tg_trap_density`)
@@ -47,6 +47,8 @@ and the positional arguments `(elt=ComplexF64, symmetry=Trivial, lattice=Infinit
 |---------|---------------|----------------|-------------------|----------------|
 | D6      | `LL_D6`       | 562            | `LL_D6_minimal`   | 45             |
 | D8      | `LL_D8`       | 2466           | `LL_D8_minimal`   | 84             |
+
+These bond dimensions do not depend on the parameters. `@mpoham` splits each multi-site term into MPO tensors with an SVD that keeps the singular values above an absolute 1.8e-12, so `LL_D6` and `LL_D8` multiply the terms by their prefactors 2^(3r) and 2^(2r)c only after that split: with the prefactors inside, the round-off of the singular values that are zero passes the threshold at large r and c, and adds spurious levels (702 for D6 and 3306 for D8 at c = 8, r = 4, the values quoted in the paper, and up to 2172 for D6).
 
 The minimal MPOs are the same operator, reproduced to floating point round-off, and are much faster both to build and to optimize with (VUMPS is about 9× faster for D6). `LL_D6` and `LL_D8` build the MPO term by term and are kept as an independent reference and to reproduce the original computations; building them is quick, but optimizing with them is slow, `LL_D8` in particular. `LL_wavelet_minimal(K, Γ4, ...)` builds the same Hamiltonian for any wavelet order, given its coefficients.
 

@@ -23,11 +23,14 @@ dense_u1(H, d, L) = reshape(convert(Array, convert(TensorMap, H)), d^L, d^L)
     @test all(iszero(data.C[o, α]) || q[α] == charges[o] for o in eachindex(ops), α in 1:n)
 end
 
-@testset "U1Irrep and Trivial give the same operator" begin
-    L, d, r = 6, 3, 1
+#at cutoff = 1, (a⁺)² and a² vanish, so their charges ±2 cannot be read off their matrices
+@testset "U1Irrep and Trivial give the same operator (cutoff = $(d - 1))" for d in (2, 3)
+    L, r = 6, 1
     kw = (; μ=1.0, c=3.0, r, cutoff=d - 1)
     tkw = (; kw..., ω=0.7, x0=0.8)
-    for (model, k) in ((LL_D6, kw), (LL_D6_minimal, kw), (LL_D6_trap, tkw), (LL_D6_trap_minimal, tkw))
+    gkw = (; kw..., V0=2.0, w=0.7)
+    for (model, k) in ((LL_D6, kw), (LL_D6_minimal, kw), (LL_D6_trap, tkw), (LL_D6_trap_minimal, tkw),
+                       (LL_D6_gaussian, gkw), (LL_D6_gaussian_minimal, gkw))
         Ht = model(FiniteChain(L); k...)
         Hu = model(U1Irrep, FiniteChain(L); k...)
         @test sectortype(physicalspace(Hu, 1)) == U1Irrep

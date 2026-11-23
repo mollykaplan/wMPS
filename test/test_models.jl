@@ -56,5 +56,9 @@ end
 #regression values: catches accidental changes in how @mpoham generates the terms
 @testset "@mpoham bond dimensions" begin
     @test dim(left_virtualspace(LL_D6(; cutoff=2), 1)) == 562
+    #the same at large prefactors 2^(3r) and 2^(2r)c, where splitting the operators with the prefactors in them
+    #kept round-off singular values as extra levels (702 at c = 8, r = 4, 2152 at c = 200, r = 4)
+    @test dim(left_virtualspace(LL_D6(; c=8.0, r=4, cutoff=2), 1)) == 562
+    @test dim(left_virtualspace(LL_D6(; c=200.0, r=4, cutoff=2), 1)) == 562
     SLOW && @test dim(left_virtualspace(LL_D8(; cutoff=2), 1)) == 2466
 end
