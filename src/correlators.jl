@@ -35,7 +35,7 @@ end
 
 #a⁺ ⊗ a and n on the physical space of ψ, with its symmetry. Its basis must be the Fock basis, in
 #the same order, as for U1Space(n => 1 for n in 0:cutoff), or U1Space(q n - p => 1 for n in 0:cutoff)
-#for a state at filling p/q (see examples/dynamics.jl); TensorMap checks the symmetry
+#for a state at filling p/q; TensorMap checks the symmetry
 function onebody_operators(ψ)
     P = physicalspace(ψ, 1)
     cutoff = state_cutoff(ψ)

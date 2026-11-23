@@ -107,12 +107,13 @@ At low resolution, optimizing directly at the target r with VUMPS or L-BFGS is f
 ] instantiate
 ```
 
-then open the worksheet `examples/wMPS_worksheet.ipynb`, which goes through ground state optimization, correlators and refinement, or run one of the scripts:
+then open the worksheet `examples/wMPS_worksheet.ipynb`, which goes through ground state optimization, correlators, refinement and a finite chain in an infinite well, or run one of the scripts:
 
 | script                          | contents                                                        |
 |---------------------------------|-----------------------------------------------------------------|
 | `examples/groundstate.jl`       | D6 and D8 ground states, compared with the exact energy          |
-| `examples/finite_chain.jl`      | DMRG in an infinite well and a harmonic trap at fixed N (U(1)), refining between resolutions, compared with the Tonks-Girardeau limit |
+| `examples/finite_chain.jl`      | DMRG in a harmonic trap at fixed N (U(1)), compared with the Tonks-Girardeau limit |
+| `examples/dynamics.jl`          | dispersion of the wavelet kinetic term, and a quench on a finite chain compared with free fermions |
 | `examples/custom_wavelet.jl`    | building the minimal MPO from your own coefficients              |
 | `examples/timing_histories.jl`  | convergence history of VUMPS followed by L-BFGS, versus time     |
 
